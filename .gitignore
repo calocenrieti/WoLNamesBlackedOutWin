@@ -361,3 +361,101 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+/.github/App12/App12/ffmpeg-master-latest-win64-lgpl/doc/bootstrap.min.css
+/.github/App12/App12/ffmpeg-master-latest-win64-lgpl/doc/community.html
+/.github/App12/App12/ffmpeg-master-latest-win64-lgpl/doc/default.css
+/.github/App12/App12/ffmpeg-master-latest-win64-lgpl/doc/developer.html
+/.github/App12/App12/ffmpeg-master-latest-win64-lgpl/doc/faq.html
+/.github/App12/App12/ffmpeg-master-latest-win64-lgpl/doc/fate.html
+/.github/App12/App12/ffmpeg-master-latest-win64-lgpl/doc/ffmpeg-all.html
+/.github/App12/App12/ffmpeg-master-latest-win64-lgpl/doc/ffmpeg-bitstream-filters.html
+/.github/App12/App12/ffmpeg-master-latest-win64-lgpl/doc/ffmpeg-codecs.html
+/.github/App12/App12/ffmpeg-master-latest-win64-lgpl/doc/ffmpeg-devices.html
+/.github/App12/App12/ffmpeg-master-latest-win64-lgpl/doc/ffmpeg-filters.html
+/.github/App12/App12/ffmpeg-master-latest-win64-lgpl/doc/ffmpeg-formats.html
+/.github/App12/App12/ffmpeg-master-latest-win64-lgpl/doc/ffmpeg-protocols.html
+/.github/App12/App12/ffmpeg-master-latest-win64-lgpl/doc/ffmpeg-resampler.html
+/.github/App12/App12/ffmpeg-master-latest-win64-lgpl/doc/ffmpeg-scaler.html
+/.github/App12/App12/ffmpeg-master-latest-win64-lgpl/doc/ffmpeg-utils.html
+/.github/App12/App12/ffmpeg-master-latest-win64-lgpl/doc/ffmpeg.html
+/.github/App12/App12/ffmpeg-master-latest-win64-lgpl/doc/ffplay-all.html
+/.github/App12/App12/ffmpeg-master-latest-win64-lgpl/doc/ffplay.html
+/.github/App12/App12/ffmpeg-master-latest-win64-lgpl/doc/ffprobe-all.html
+/.github/App12/App12/ffmpeg-master-latest-win64-lgpl/doc/ffprobe.html
+/.github/App12/App12/ffmpeg-master-latest-win64-lgpl/doc/general.html
+/.github/App12/App12/ffmpeg-master-latest-win64-lgpl/doc/git-howto.html
+/.github/App12/App12/ffmpeg-master-latest-win64-lgpl/doc/libavcodec.html
+/.github/App12/App12/ffmpeg-master-latest-win64-lgpl/doc/libavdevice.html
+/.github/App12/App12/ffmpeg-master-latest-win64-lgpl/doc/libavfilter.html
+/.github/App12/App12/ffmpeg-master-latest-win64-lgpl/doc/libavformat.html
+/.github/App12/App12/ffmpeg-master-latest-win64-lgpl/doc/libavutil.html
+/.github/App12/App12/ffmpeg-master-latest-win64-lgpl/doc/libswresample.html
+/.github/App12/App12/ffmpeg-master-latest-win64-lgpl/doc/libswscale.html
+/.github/App12/App12/ffmpeg-master-latest-win64-lgpl/doc/mailing-list-faq.html
+/.github/App12/App12/ffmpeg-master-latest-win64-lgpl/doc/nut.html
+/.github/App12/App12/ffmpeg-master-latest-win64-lgpl/doc/platform.html
+/.github/App12/App12/ffmpeg-master-latest-win64-lgpl/doc/style.min.css
+/.github/App12/App12/ffmpeg-master-latest-win64-lgpl/FFmpeg-master.zip
+/.github/App12/App12/ffmpeg-master-latest-win64-lgpl/LICENSE.txt
+/.github/App12/App12 (Package)/Images/LargeTile.scale-100.png
+/.github/App12/App12 (Package)/Images/LargeTile.scale-125.png
+/.github/App12/App12 (Package)/Images/LargeTile.scale-150.png
+/.github/App12/App12 (Package)/Images/LargeTile.scale-200.png
+/.github/App12/App12 (Package)/Images/LargeTile.scale-400.png
+/.github/App12/App12 (Package)/Images/LockScreenLogo.scale-200.png
+/.github/App12/App12 (Package)/Images/SmallTile.scale-100.png
+/.github/App12/App12 (Package)/Images/SmallTile.scale-125.png
+/.github/App12/App12 (Package)/Images/SmallTile.scale-150.png
+/.github/App12/App12 (Package)/Images/SmallTile.scale-200.png
+/.github/App12/App12 (Package)/Images/SmallTile.scale-400.png
+/.github/App12/App12 (Package)/Images/SplashScreen.scale-100.png
+/.github/App12/App12 (Package)/Images/SplashScreen.scale-125.png
+/.github/App12/App12 (Package)/Images/SplashScreen.scale-150.png
+/.github/App12/App12 (Package)/Images/SplashScreen.scale-200.png
+/.github/App12/App12 (Package)/Images/SplashScreen.scale-400.png
+/.github/App12/App12 (Package)/Images/Square150x150Logo.scale-100.png
+/.github/App12/App12 (Package)/Images/Square150x150Logo.scale-125.png
+/.github/App12/App12 (Package)/Images/Square150x150Logo.scale-150.png
+/.github/App12/App12 (Package)/Images/Square150x150Logo.scale-200.png
+/.github/App12/App12 (Package)/Images/Square150x150Logo.scale-400.png
+/.github/App12/App12 (Package)/Images/Square44x44Logo.altform-lightunplated_targetsize-16.png
+/.github/App12/App12 (Package)/Images/Square44x44Logo.altform-lightunplated_targetsize-24.png
+/.github/App12/App12 (Package)/Images/Square44x44Logo.altform-lightunplated_targetsize-256.png
+/.github/App12/App12 (Package)/Images/Square44x44Logo.altform-lightunplated_targetsize-32.png
+/.github/App12/App12 (Package)/Images/Square44x44Logo.altform-lightunplated_targetsize-48.png
+/.github/App12/App12 (Package)/Images/Square44x44Logo.altform-unplated_targetsize-16.png
+/.github/App12/App12 (Package)/Images/Square44x44Logo.altform-unplated_targetsize-256.png
+/.github/App12/App12 (Package)/Images/Square44x44Logo.altform-unplated_targetsize-32.png
+/.github/App12/App12 (Package)/Images/Square44x44Logo.altform-unplated_targetsize-48.png
+/.github/App12/App12 (Package)/Images/Square44x44Logo.scale-100.png
+/.github/App12/App12 (Package)/Images/Square44x44Logo.scale-125.png
+/.github/App12/App12 (Package)/Images/Square44x44Logo.scale-150.png
+/.github/App12/App12 (Package)/Images/Square44x44Logo.scale-200.png
+/.github/App12/App12 (Package)/Images/Square44x44Logo.scale-400.png
+/.github/App12/App12 (Package)/Images/Square44x44Logo.targetsize-16.png
+/.github/App12/App12 (Package)/Images/Square44x44Logo.targetsize-24.png
+/.github/App12/App12 (Package)/Images/Square44x44Logo.targetsize-24_altform-unplated.png
+/.github/App12/App12 (Package)/Images/Square44x44Logo.targetsize-256.png
+/.github/App12/App12 (Package)/Images/Square44x44Logo.targetsize-32.png
+/.github/App12/App12 (Package)/Images/Square44x44Logo.targetsize-48.png
+/.github/App12/App12 (Package)/Images/StoreLogo.backup.png
+/.github/App12/App12 (Package)/Images/StoreLogo.scale-100.png
+/.github/App12/App12 (Package)/Images/StoreLogo.scale-125.png
+/.github/App12/App12 (Package)/Images/StoreLogo.scale-150.png
+/.github/App12/App12 (Package)/Images/StoreLogo.scale-200.png
+/.github/App12/App12 (Package)/Images/StoreLogo.scale-400.png
+/.github/App12/App12 (Package)/Images/Wide310x150Logo.scale-100.png
+/.github/App12/App12 (Package)/Images/Wide310x150Logo.scale-125.png
+/.github/App12/App12 (Package)/Images/Wide310x150Logo.scale-150.png
+/.github/App12/App12 (Package)/Images/Wide310x150Logo.scale-200.png
+/.github/App12/App12 (Package)/Images/Wide310x150Logo.scale-400.png
+/.github/App12/App12/cudart64_12.dll
+/.github/App12/App12/DirectML.dll
+/.github/App12/App12/nvinfer_10.dll
+/.github/App12/App12/nvinfer_builder_resource_10.dll
+/.github/App12/App12/nvonnxparser_10.dll
+/.github/App12/App12/onnxruntime.dll
+/.github/App12/App12/onnxruntime_providers_shared.dll
+/.github/App12/App12/opencv_world4100.dll
+/.github/App12/App12/WoLNamesBlackedOut_Util.dll
+/.github/App12/App12/WoLNamesBlackedOut_yolo.dll
