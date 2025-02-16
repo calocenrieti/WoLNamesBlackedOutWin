@@ -1,0 +1,238 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RootNamespace>WoLNamesBlackedOut</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Platforms>x64</Platforms>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <UseWinUI>true</UseWinUI>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Remove="ffmpeg-master-latest-win64-lgpl\bin\ffmpeg.exe" />
+    <None Remove="ffmpeg-master-latest-win64-lgpl\bin\ffplay.exe" />
+    <None Remove="ffmpeg-master-latest-win64-lgpl\bin\ffprobe.exe" />
+    <None Remove="ffmpeg-master-latest-win64-lgpl\doc\bootstrap.min.css" />
+    <None Remove="ffmpeg-master-latest-win64-lgpl\doc\community.html" />
+    <None Remove="ffmpeg-master-latest-win64-lgpl\doc\default.css" />
+    <None Remove="ffmpeg-master-latest-win64-lgpl\doc\developer.html" />
+    <None Remove="ffmpeg-master-latest-win64-lgpl\doc\faq.html" />
+    <None Remove="ffmpeg-master-latest-win64-lgpl\doc\fate.html" />
+    <None Remove="ffmpeg-master-latest-win64-lgpl\doc\ffmpeg-all.html" />
+    <None Remove="ffmpeg-master-latest-win64-lgpl\doc\ffmpeg-bitstream-filters.html" />
+    <None Remove="ffmpeg-master-latest-win64-lgpl\doc\ffmpeg-codecs.html" />
+    <None Remove="ffmpeg-master-latest-win64-lgpl\doc\ffmpeg-devices.html" />
+    <None Remove="ffmpeg-master-latest-win64-lgpl\doc\ffmpeg-filters.html" />
+    <None Remove="ffmpeg-master-latest-win64-lgpl\doc\ffmpeg-formats.html" />
+    <None Remove="ffmpeg-master-latest-win64-lgpl\doc\ffmpeg-protocols.html" />
+    <None Remove="ffmpeg-master-latest-win64-lgpl\doc\ffmpeg-resampler.html" />
+    <None Remove="ffmpeg-master-latest-win64-lgpl\doc\ffmpeg-scaler.html" />
+    <None Remove="ffmpeg-master-latest-win64-lgpl\doc\ffmpeg-utils.html" />
+    <None Remove="ffmpeg-master-latest-win64-lgpl\doc\ffmpeg.html" />
+    <None Remove="ffmpeg-master-latest-win64-lgpl\doc\ffplay-all.html" />
+    <None Remove="ffmpeg-master-latest-win64-lgpl\doc\ffplay.html" />
+    <None Remove="ffmpeg-master-latest-win64-lgpl\doc\ffprobe-all.html" />
+    <None Remove="ffmpeg-master-latest-win64-lgpl\doc\ffprobe.html" />
+    <None Remove="ffmpeg-master-latest-win64-lgpl\doc\general.html" />
+    <None Remove="ffmpeg-master-latest-win64-lgpl\doc\git-howto.html" />
+    <None Remove="ffmpeg-master-latest-win64-lgpl\doc\libavcodec.html" />
+    <None Remove="ffmpeg-master-latest-win64-lgpl\doc\libavdevice.html" />
+    <None Remove="ffmpeg-master-latest-win64-lgpl\doc\libavfilter.html" />
+    <None Remove="ffmpeg-master-latest-win64-lgpl\doc\libavformat.html" />
+    <None Remove="ffmpeg-master-latest-win64-lgpl\doc\libavutil.html" />
+    <None Remove="ffmpeg-master-latest-win64-lgpl\doc\libswresample.html" />
+    <None Remove="ffmpeg-master-latest-win64-lgpl\doc\libswscale.html" />
+    <None Remove="ffmpeg-master-latest-win64-lgpl\doc\mailing-list-faq.html" />
+    <None Remove="ffmpeg-master-latest-win64-lgpl\doc\nut.html" />
+    <None Remove="ffmpeg-master-latest-win64-lgpl\doc\platform.html" />
+    <None Remove="ffmpeg-master-latest-win64-lgpl\doc\style.min.css" />
+    <None Remove="ffmpeg-master-latest-win64-lgpl\FFmpeg-master.zip" />
+    <None Remove="ffmpeg-master-latest-win64-lgpl\LICENSE.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="cudart64_12.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="DirectML.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffmpeg-master-latest-win64-lgpl\bin\ffmpeg.exe">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffmpeg-master-latest-win64-lgpl\bin\ffplay.exe">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffmpeg-master-latest-win64-lgpl\bin\ffprobe.exe">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffmpeg-master-latest-win64-lgpl\doc\bootstrap.min.css">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffmpeg-master-latest-win64-lgpl\doc\community.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffmpeg-master-latest-win64-lgpl\doc\default.css">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffmpeg-master-latest-win64-lgpl\doc\developer.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffmpeg-master-latest-win64-lgpl\doc\faq.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffmpeg-master-latest-win64-lgpl\doc\fate.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffmpeg-master-latest-win64-lgpl\doc\ffmpeg-all.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffmpeg-master-latest-win64-lgpl\doc\ffmpeg-bitstream-filters.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffmpeg-master-latest-win64-lgpl\doc\ffmpeg-codecs.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffmpeg-master-latest-win64-lgpl\doc\ffmpeg-devices.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffmpeg-master-latest-win64-lgpl\doc\ffmpeg-filters.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffmpeg-master-latest-win64-lgpl\doc\ffmpeg-formats.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffmpeg-master-latest-win64-lgpl\doc\ffmpeg-protocols.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffmpeg-master-latest-win64-lgpl\doc\ffmpeg-resampler.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffmpeg-master-latest-win64-lgpl\doc\ffmpeg-scaler.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffmpeg-master-latest-win64-lgpl\doc\ffmpeg-utils.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffmpeg-master-latest-win64-lgpl\doc\ffmpeg.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffmpeg-master-latest-win64-lgpl\doc\ffplay-all.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffmpeg-master-latest-win64-lgpl\doc\ffplay.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffmpeg-master-latest-win64-lgpl\doc\ffprobe-all.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffmpeg-master-latest-win64-lgpl\doc\ffprobe.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffmpeg-master-latest-win64-lgpl\doc\general.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffmpeg-master-latest-win64-lgpl\doc\git-howto.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffmpeg-master-latest-win64-lgpl\doc\libavcodec.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffmpeg-master-latest-win64-lgpl\doc\libavdevice.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffmpeg-master-latest-win64-lgpl\doc\libavfilter.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffmpeg-master-latest-win64-lgpl\doc\libavformat.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffmpeg-master-latest-win64-lgpl\doc\libavutil.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffmpeg-master-latest-win64-lgpl\doc\libswresample.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffmpeg-master-latest-win64-lgpl\doc\libswscale.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffmpeg-master-latest-win64-lgpl\doc\mailing-list-faq.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffmpeg-master-latest-win64-lgpl\doc\nut.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffmpeg-master-latest-win64-lgpl\doc\platform.html">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffmpeg-master-latest-win64-lgpl\doc\style.min.css">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffmpeg-master-latest-win64-lgpl\FFmpeg-master.zip">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="ffmpeg-master-latest-win64-lgpl\LICENSE.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Microsoft.WindowsAppRuntime.Bootstrap.dll" />
+    <Content Include="my_yolov8m.onnx">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="nvinfer_10.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="nvinfer_builder_resource_10.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="nvonnxparser_10.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="onnxruntime.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="onnxruntime_providers_shared.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="opencv_world4100.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="WoLNamesBlackedOut.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="WoLNamesBlackedOut_Util.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="WoLNamesBlackedOut_yolo.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Manifest Include="$(ApplicationManifest)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.1742" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250205002" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Update="C_SQUARE_ENIX.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+    <!-- Publish Properties -->
+  <PropertyGroup>
+    <PublishReadyToRun Condition="'$(Configuration)' == 'Debug'">False</PublishReadyToRun>
+    <PublishReadyToRun Condition="'$(Configuration)' != 'Debug'">True</PublishReadyToRun>
+    <PublishTrimmed Condition="'$(Configuration)' == 'Debug'">False</PublishTrimmed>
+    <PublishTrimmed Condition="'$(Configuration)' != 'Debug'">True</PublishTrimmed>
+    <AssemblyName>WoLNamesBlackedOut</AssemblyName>
+    <ApplicationIcon>WoLNamesBlackedOut.ico</ApplicationIcon>
+  </PropertyGroup>
+  <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+    <Exec Command="rem xcopy &quot;$(ProjectDir)dll\*.*&quot; &quot;C:\Users\jinta\source\repos\App12\App12\App12 (Package)\bin\x64\Release\AppX\App12&quot; /s /y" />
+  </Target>
+</Project>

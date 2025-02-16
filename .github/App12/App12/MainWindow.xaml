@@ -1,0 +1,195 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<Window x:Class="WoLNamesBlackedOut.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" 
+        Title="WoLNamesBlackedOut" 
+        >
+    <Grid>
+        <StackPanel HorizontalAlignment="Stretch">
+            <StackPanel  Height="44"  Orientation="Horizontal" x:Name="TitleBar" HorizontalAlignment="Stretch" VerticalAlignment="Top">
+                <TextBlock VerticalAlignment="Center" Text="WoLNamesBlackedOut"  Style="{StaticResource HeaderTextBlockStyle}" FontSize="24" FontWeight="Black" Margin="16,0,0,0"/>
+                <CommandBar Background="Transparent" IsOpen="False" DefaultLabelPosition="Right">
+                    <AppBarButton Icon="More" Margin="150,0,0,0" >
+                        <AppBarButton.Flyout>
+                            <MenuFlyout >
+                                <MenuFlyoutItem x:Name="ConvertButton" Text="Convert ONNX to TensorRT" Click="ConvertButton_Click"/>
+                                <MenuFlyoutItem x:Name="LicenseButton" Text="License" Click="LicenseButton_Click"/>
+                                <MenuFlyoutSeparator/>
+                                <MenuFlyoutItem Text="about" Click="AboutButton_Click"/>
+                            </MenuFlyout>
+                        </AppBarButton.Flyout>
+                    </AppBarButton>
+                    <AppBarButton Icon="Save" Label="Save Image"  Margin="4,0,0,0"  x:Name="SaveImageButton" Click="SaveImageButton_Click" />
+                </CommandBar>
+            </StackPanel>
+            <StackPanel HorizontalAlignment="Left" Orientation="Horizontal">
+                <StackPanel >
+                    <!-- Select File Section -->
+                    <TextBlock  Text="Select File" Style="{StaticResource SubheaderTextBlockStyle}" FontWeight="Bold" FontSize="16" Margin="20,4,4,4" VerticalAlignment="Center"></TextBlock>
+
+                    <StackPanel >
+                        <StackPanel Orientation="Horizontal" Margin="12,4,4,4">
+                            <Button x:Name="PickAFileButton" Click="PickAFileButton_Click" >
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                    <FontIcon Glyph="&#xE8E5;" />
+                                    <TextBlock Text=" Open_File" VerticalAlignment="Center" Margin="4,0,0,0"/>
+                                </StackPanel>
+                            </Button>
+                            <TextBlock x:Name="PickAFileOutputTextBlock" TextWrapping="Wrap" MaxWidth="400"  Padding="8,0,0,0" VerticalAlignment="Center" Grid.Column="2"/>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <Line Stroke="Gray" X1="10" Y1="0" X2="470" Y2="0" StrokeThickness="1" Margin="0,8,12,0"/>
+
+                    <!-- Setting Section -->
+                    <TextBlock  Text="Setting"  Style="{StaticResource SubheaderTextBlockStyle}" FontWeight="Bold" FontSize="16" Margin="20,12,4,4" VerticalAlignment="Center"></TextBlock>
+                    <StackPanel >
+                        <StackPanel Orientation="Horizontal" Margin="12,4,4,4">
+                            <Button x:Name="BlackedOut_color" Click="ShowColorDialog_Click">
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                    <FontIcon x:Name="BlackedOut_color_icon" Glyph="&#xE790;" Foreground="Black" />
+                                    <TextBlock Text=" BlackedOut_color" VerticalAlignment="Center"  Margin="4,0,0,0"/>
+                                </StackPanel>
+                            </Button>
+
+                            <Button x:Name="FixedFlame_color" Click="ShowColorDialog_Click" Margin="4">
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                    <FontIcon x:Name="FixedFlame_color_icon" Glyph="&#xE790;" Foreground="Black" />
+                                    <TextBlock Text=" FixedFlame_color" VerticalAlignment="Center"  Margin="4,0,0,0"/>
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="20,0,0,0">
+                            <CheckBox x:Name="Inpaint" Content="Inpaint" Margin="4,0,0,0"/>
+                            <CheckBox x:Name="Add_Copyright" Content="Add_Copyright" IsChecked="True" Margin="4,0,0,0" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal"  Margin="20,0,0,0">
+                            <CheckBox x:Name="Use_TensotRT" Content="Use_TensotRT" Margin="4,0,0,0"/>
+                            <CheckBox x:Name="No_Inference" Content="No_Inference" Margin="4,0,0,0"/>
+                        </StackPanel>
+                    </StackPanel>
+
+
+
+                    <Line Stroke="Gray" X1="10" Y1="0" X2="470" Y2="0" StrokeThickness="1" Margin="0,8,12,0"/>
+                    <!-- Preview Section -->
+                    <TextBlock  Text="Preview"  Style="{StaticResource SubheaderTextBlockStyle}" FontWeight="Bold" FontSize="16" Margin="20,12,4,4" VerticalAlignment="Center"></TextBlock>
+                    <StackPanel >
+                        <StackPanel  Orientation="Horizontal" Margin="12,4,4,4">
+
+                            <Slider x:Name="FrameSlideBar" Minimum="0" Maximum="100" Width="300" HorizontalAlignment="Left" Margin="4" ValueChanged="FrameSlideBar_ValueChanged"/>
+                            <StackPanel Orientation="Horizontal">
+                                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Right" Margin="4">
+                                    <TextBlock x:Name="FrameTextBlock_n" Text="0" HorizontalTextAlignment="Right" VerticalAlignment="Center"/>
+                                </StackPanel>
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock Text="/" HorizontalTextAlignment="Right" VerticalAlignment="Center"/>
+                                </StackPanel>
+                                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Right" Margin="4">
+                                    <TextBlock x:Name="FrameTextBlock_e" Text="00000" HorizontalTextAlignment="Right" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="12,0,4,4">
+                            <Button x:Name="PreviewButton" Click="PreviewButton_Click">
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center" >
+                                    <FontIcon Glyph="&#xF19D;" />
+                                    <TextBlock Text=" Preview"  Margin="4,0,0,0" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+                    </StackPanel>
+
+
+                    <!-- Movie Rendering Section -->
+                    <Line Stroke="Gray" X1="10" Y1="0" X2="470" Y2="0" StrokeThickness="1" Margin="0,8,0,0"/>
+
+                    <TextBlock  Text="Movie Rendering"  Style="{StaticResource SubheaderTextBlockStyle}" FontWeight="Bold" FontSize="16" Margin="20,12,4,4" VerticalAlignment="Center"></TextBlock>
+                    <StackPanel  Orientation="Vertical">
+                        <StackPanel  Orientation="Horizontal"  Margin="12,4,4,4">
+                            <StackPanel>
+                                <NumberBox x:Name="Start_min" Header="Start_min:" Value="0"   SpinButtonPlacementMode="Compact" SmallChange="1"    LargeChange="10"  Minimum="0"  Maximum="59"/>
+                            </StackPanel>
+                            <StackPanel Margin="4" Orientation="Vertical" VerticalAlignment="Bottom">
+                                <TextBlock Text=":" HorizontalTextAlignment="Center"/>
+                            </StackPanel>
+                            <StackPanel>
+                                <NumberBox x:Name="Start_sec" Header="Start_sec:" Value="0"  SpinButtonPlacementMode="Compact" SmallChange="1"    LargeChange="10"  Minimum="0"  Maximum="59"/>
+                            </StackPanel>
+                            <StackPanel Margin="4" Orientation="Vertical"  VerticalAlignment="Bottom">
+                                <FontIcon Glyph="&#xF141;" />
+                            </StackPanel>
+                            <StackPanel>
+                                <NumberBox x:Name="End_min" Header="End_min:" Value="0"  SpinButtonPlacementMode="Compact" SmallChange="1"    LargeChange="10"  Minimum="0"  Maximum="59"/>
+                            </StackPanel>
+                            <StackPanel Margin="4" Orientation="Vertical"  VerticalAlignment="Bottom">
+                                <TextBlock Text=":" HorizontalTextAlignment="Center"/>
+                            </StackPanel>
+                            <StackPanel>
+                                <NumberBox x:Name="End_sec" Header="End_sec:" Value="0"  SpinButtonPlacementMode="Compact" SmallChange="1"    LargeChange="10"   Minimum="0"  Maximum="59"/>
+                            </StackPanel>
+
+                        </StackPanel>
+                        <StackPanel  Orientation="Horizontal"  Margin="12,4,4,4" >
+                            <StackPanel Margin="0,4,0,0">
+                                <Button x:Name="BlackedOutStartButton" Click="BlackedOutStartButton_Click">
+                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                        <FontIcon Glyph="&#xF5B0;" />
+                                        <TextBlock Text=" BlackedOut Start"  Margin="4,0,0,0" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Button>
+                            </StackPanel>
+                            <StackPanel Margin="4,4,0,0">
+                                <Button x:Name="StopButton" Click="StopButton_Click" IsEnabled="False" Visibility="Collapsed">
+                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                        <FontIcon Glyph="&#xE71A;" />
+                                        <TextBlock Text=" STOP"  Margin="4,0,0,0" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Button>
+                            </StackPanel>
+                        </StackPanel>
+                    </StackPanel>
+                    <!-- progress Section -->
+                    <Line Stroke="Gray" X1="10" Y1="0" X2="470" Y2="0" StrokeThickness="1" Margin="0,8,12,0"/>
+                    <TextBlock  Text="Progress"  Style="{StaticResource SubheaderTextBlockStyle}" FontWeight="Bold" FontSize="16" Margin="20,12,4,4" VerticalAlignment="Center"></TextBlock>
+                    <ProgressBar x:Name="ProgressBar" Width="400" Value="0" IsIndeterminate="False" ShowPaused="False" ShowError="False" HorizontalAlignment="Left" Margin="12,4,4,4"/>
+                    <StackPanel Orientation="Vertical" Margin="12,4,4,4">
+                        <StackPanel Orientation="Horizontal" >
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="Elapsed:" Margin="4" />
+                                <TextBlock x:Name="Elapsed" Text="0.00" Margin="4"/>
+                                <TextBlock Text="s" Margin="4"/>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="FPS:" Margin="16,4,4,4" />
+                                <TextBlock x:Name="FPS" Text="0.00" Margin="4"/>
+                                <TextBlock Text="s" Margin="4"/>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="ETA:" Margin="16,4,4,4" />
+                                <TextBlock x:Name="ETA" Text="0.00" Margin="4"/>
+                                <TextBlock Text="s" Margin="4"/>
+                            </StackPanel>
+                        </StackPanel>
+                        <StackPanel>
+                            <TextBlock x:Name="FFMpeg_text" Margin="4" Text="" TextWrapping="Wrap"  />
+                            
+                        </StackPanel>
+                    </StackPanel>
+                    
+                    <!-- rakuten Section -->                    
+                    <StackPanel>
+                        <WebView2 x:Name="MyWebView2" Source="https://blog.calocenrieti.com/rakuten_ad.htm" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" MinHeight="200" MinWidth="200"/>
+                        <InfoBar x:Name="InfoBar" Visibility="Collapsed" IsOpen="True" IsIconVisible="True" Severity="Success" IsClosable="True" Message="TensorRT Engine build success!" Margin="4"/>
+                    </StackPanel>
+                </StackPanel>
+                <StackPanel Orientation="Vertical">
+                    <Canvas x:Name="DrawingCanvas" Background="Transparent" Height="576">
+                        <Image x:Name="image_preview" Height="576" />
+                    </Canvas>
+                </StackPanel>
+            </StackPanel>
+        </StackPanel>
+    </Grid>
+</Window>
