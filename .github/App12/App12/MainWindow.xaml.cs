@@ -16,6 +16,7 @@ using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Windows.ApplicationModel;
 using Windows.Storage;
 using Windows.Storage.Pickers;
 using Windows.UI;
@@ -209,7 +210,7 @@ namespace WoLNamesBlackedOut
                 Use_TensotRT.IsEnabled = false;
                 ConvertButton.IsEnabled = false;
             }
-            else //その他のベンダーの場合
+            else //その他のベンダーの場合(gpuvendor == 'X')
             {
                 Environment.Exit(0);
             }
@@ -718,8 +719,10 @@ namespace WoLNamesBlackedOut
         }
         private async void AboutButton_Click(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
         {
-            var version = Assembly.GetExecutingAssembly().GetName().Version;
-            var versionText = $"Version: {version.Major}.{version.Minor}.{version.Build}.{version.Revision}";
+            //var version = Assembly.GetExecutingAssembly().GetName().Version;
+            //var versionText = $"Version: {version.Major}.{version.Minor}.{version.Build}.{version.Revision}";
+            var packageVersion = Package.Current.Id.Version;
+            var versionText = $"Version: {packageVersion.Major}.{packageVersion.Minor}.{packageVersion.Build}.{packageVersion.Revision}";
 
             var aboutDialog = new ContentDialog
             {
