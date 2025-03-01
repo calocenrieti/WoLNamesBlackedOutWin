@@ -459,3 +459,4 @@ FodyWeavers.xsd
 /.github/App12/App12/opencv_world4100.dll
 /.github/App12/App12/WoLNamesBlackedOut_Util.dll
 /.github/App12/App12/WoLNamesBlackedOut_yolo.dll
+/.github/App12/App12/my_yolov8m_bk.onnx
