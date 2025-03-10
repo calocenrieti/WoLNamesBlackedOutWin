@@ -460,3 +460,10 @@ FodyWeavers.xsd
 /.github/App12/App12/WoLNamesBlackedOut_Util.dll
 /.github/App12/App12/WoLNamesBlackedOut_yolo.dll
 /.github/App12/App12/my_yolov8m_bk.onnx
+/.github/App12/App12/WoLNamesBlackedOut_yolo.exp
+/.github/App12/App12/WoLNamesBlackedOut_yolo.lib
+/.github/App12/App12/WoLNamesBlackedOut_Util.exp
+/.github/App12/App12/WoLNamesBlackedOut_Util.lib
+/.github/App12/App12/WoLNamesBlackedOut_Util.pdb
+/.github/App12/App12/my_yolov8m.onnx
+/.github/App12/App12/my_yolov8m_s.onnx
