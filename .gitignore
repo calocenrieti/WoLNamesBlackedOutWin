@@ -470,3 +470,4 @@ FodyWeavers.xsd
 /.github/App12/App12/WoLNamesBlackedOut_Util.pri
 /.github/App12/App12/my_yolov8m_s_bk.onnx
 /.github/App12/App12/my_yolov8m_s_dy.onnx
+/.github/App12/App12/Microsoft.WindowsAppRuntime.Bootstrap.dll
