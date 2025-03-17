@@ -65,7 +65,7 @@
                             <CheckBox x:Name="Add_Copyright" Content="Add_Copyright" IsChecked="True" Margin="4,0,0,0" />
                         </StackPanel>
                         <StackPanel Orientation="Horizontal"  Margin="20,0,0,0">
-                            <CheckBox x:Name="Use_TensotRT" Content="Use_TensotRT" Margin="4,0,0,0"/>
+                            <CheckBox x:Name="Use_TensorRT" Content="Use_TensorRT" Margin="4,0,0,0"/>
                             <CheckBox x:Name="No_Inference" Content="No_Inference" Margin="4,0,0,0"/>
                         </StackPanel>
                     </StackPanel>

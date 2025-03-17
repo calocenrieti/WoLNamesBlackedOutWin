@@ -50,6 +50,8 @@
     <None Remove="ffmpeg-master-latest-win64-lgpl\doc\style.min.css" />
     <None Remove="ffmpeg-master-latest-win64-lgpl\FFmpeg-master.zip" />
     <None Remove="ffmpeg-master-latest-win64-lgpl\LICENSE.txt" />
+    <None Remove="my_yolov8m_s.onnx" />
+    <None Remove="my_yolov8m_s_dy.onnx" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="cudart64_12.dll">
@@ -176,7 +178,10 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="Microsoft.WindowsAppRuntime.Bootstrap.dll" />
-    <Content Include="my_yolov8m.onnx">
+    <Content Include="my_yolov8m_s.onnx">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="my_yolov8m_s_dy.onnx">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="nvinfer_10.dll">
@@ -213,8 +218,9 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3124.44" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.1742" />
-    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250205002" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250228001" />
   </ItemGroup>
 
   <ItemGroup>
