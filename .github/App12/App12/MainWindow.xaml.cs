@@ -212,24 +212,24 @@ namespace WoLNamesBlackedOut
             else //その他のベンダーの場合(gpuvendor == 'X')
             {
                 UIControl_enable_false();
-                InfoBar.Message = "Sorry, we could not find any available hardware encoders. The app cannot run. The app will automatically close after 10 seconds.";
+                InfoBar.Message = "Sorry, we could not find any available hardware encoders. The app cannot run.";
                 InfoBar.Severity = InfoBarSeverity.Error;
                 InfoBar.IsOpen = true;
 
                 InfoBar.Visibility = Visibility.Visible;
-                // DispatcherTimerを利用して10秒後にアプリケーションを終了する
-                DispatcherTimer timer = new DispatcherTimer
-                {
-                    Interval = TimeSpan.FromSeconds(10) // 10秒のインターバルを設定
-                };
+                //// DispatcherTimerを利用して10秒後にアプリケーションを終了する
+                //DispatcherTimer timer = new DispatcherTimer
+                //{
+                //    Interval = TimeSpan.FromSeconds(10) // 10秒のインターバルを設定
+                //};
 
-                timer.Tick += (sender, e) =>
-                {
-                    timer.Stop();  // 複数回の実行を防ぐためにタイマーを停止
-                    Environment.Exit(0);  // アプリケーションを終了
-                };
+                //timer.Tick += (sender, e) =>
+                //{
+                //    timer.Stop();  // 複数回の実行を防ぐためにタイマーを停止
+                //    Environment.Exit(0);  // アプリケーションを終了
+                //};
 
-                timer.Start(); // タイマーを開始
+                //timer.Start(); // タイマーを開始
             }
 
             if (gpuvendor != 'X')
