@@ -46,29 +46,59 @@
                     <TextBlock  Text="Setting"  Style="{StaticResource SubheaderTextBlockStyle}" FontWeight="Bold" FontSize="16" Margin="20,12,4,4" VerticalAlignment="Center"></TextBlock>
                     <StackPanel >
                         <StackPanel Orientation="Horizontal" Margin="12,4,4,4">
-                            <Button x:Name="BlackedOut_color" Click="ShowColorDialog_Click">
-                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
-                                    <FontIcon x:Name="BlackedOut_color_icon" Glyph="&#xE790;" Foreground="Black" />
-                                    <TextBlock Text=" BlackedOut_color" VerticalAlignment="Center"  Margin="4,0,0,0"/>
+                            <StackPanel HorizontalAlignment="Center">
+                                <StackPanel Orientation="Horizontal"  Margin="4">
+                                    <TextBlock Text="BlackedOut_Type" Margin="4,0,0,0" VerticalAlignment="Center" />
+                                    <ComboBox x:Name="BlackedOut_ComboBox" SelectedItem="Solid" VerticalAlignment="Center" Margin="4,0,0,0" Width="100" SelectionChanged="BlackedOut_ComboBox_SelectionChanged">
+                                        <x:String>Solid</x:String>
+                                        <x:String>Mosaic</x:String>
+                                        <x:String>Blur</x:String>
+                                        <x:String>Inpaint</x:String>
+                                        <x:String>No_Inference</x:String>
+                                    </ComboBox>
                                 </StackPanel>
-                            </Button>
+                                <StackPanel HorizontalAlignment="Center">
+                                    <Button x:Name="BlackedOut_color" Click="ShowColorDialog_Click" Margin="4" Visibility="Visible" Width="200">
+                                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                            <FontIcon x:Name="BlackedOut_color_icon" Glyph="&#xE790;" Foreground="Black" />
+                                            <TextBlock Text=" BlackedOut_color" VerticalAlignment="Center"  Margin="4,0,0,0"/>
+                                        </StackPanel>
+                                    </Button>
+                                </StackPanel>
+                                <Slider x:Name="BlackedOutSlideBar" Value="3" Minimum="1" Maximum="5" Width="200" HorizontalAlignment="Center" Margin="4" Visibility="Collapsed"/>
+                            </StackPanel>
 
-                            <Button x:Name="FixedFlame_color" Click="ShowColorDialog_Click" Margin="4">
-                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
-                                    <FontIcon x:Name="FixedFlame_color_icon" Glyph="&#xE790;" Foreground="Black" />
-                                    <TextBlock Text=" FixedFlame_color" VerticalAlignment="Center"  Margin="4,0,0,0"/>
+                            <StackPanel HorizontalAlignment="Center" Margin="4,0,0,0">
+                                <StackPanel Orientation="Horizontal"  Margin="4">
+                                    <TextBlock Text="FixedFrame_Type" Margin="4,0,0,0" VerticalAlignment="Center" />
+                                    <ComboBox x:Name="FixedFrame_ComboBox" SelectedItem="Solid" VerticalAlignment="Center" Margin="4,0,0,0" Width="100" SelectionChanged="FixedFrame_ComboBox_SelectionChanged">
+                                        <x:String>Solid</x:String>
+                                        <x:String>Mosaic</x:String>
+                                        <x:String>Blur</x:String>
+                                    </ComboBox>
                                 </StackPanel>
-                            </Button>
-                        </StackPanel>
-                        <StackPanel Orientation="Horizontal" Margin="20,0,0,0">
-                            <CheckBox x:Name="Inpaint" Content="Inpaint" Margin="4,0,0,0"/>
-                            <CheckBox x:Name="Add_Copyright" Content="Add_Copyright" IsChecked="True" Margin="4,0,0,0" />
-                        </StackPanel>
-                        <StackPanel Orientation="Horizontal"  Margin="20,0,0,0">
-                            <CheckBox x:Name="Use_TensorRT" Content="Use_TensorRT" Margin="4,0,0,0"/>
-                            <CheckBox x:Name="No_Inference" Content="No_Inference" Margin="4,0,0,0"/>
+                                <StackPanel  HorizontalAlignment="Center" >
+                                    <Button x:Name="FixedFrame_color" Click="ShowColorDialog_Click" Margin="4" Visibility="Visible" Width="200">
+                                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                            <FontIcon x:Name="FixedFrame_color_icon" Glyph="&#xE790;" Foreground="Black" />
+                                            <TextBlock Text=" FixedFrame_color" VerticalAlignment="Center"  Margin="4,0,0,0"/>
+                                        </StackPanel>
+                                    </Button>
+                                </StackPanel>
+                                <Slider x:Name="FixedFrameSlideBar" Value="3" Minimum="1" Maximum="5" Width="200"  HorizontalAlignment="Center" Margin="4" Visibility="Collapsed"/>
+                            </StackPanel>
                         </StackPanel>
                     </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="20,0,0,0">
+                        
+                        <CheckBox x:Name="Add_Copyright" Content="Add_Copyright" IsChecked="True" Margin="4,0,0,0" />
+                        <CheckBox x:Name="Use_TensorRT" Content="Use_TensorRT" Margin="12,0,0,0"/>
+                    </StackPanel>
+                    <!--<StackPanel Orientation="Horizontal"  Margin="20,0,0,0" Visibility="Collapsed">
+                        <CheckBox x:Name="Inpaint" Content="Inpaint" Margin="4,0,0,0"/>
+                        <CheckBox x:Name="No_Inference" Content="No_Inference" Margin="4,0,0,0"/>
+                    </StackPanel>-->
+                
 
 
 
