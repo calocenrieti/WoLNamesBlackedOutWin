@@ -1,3 +1,4 @@
+using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
@@ -8,11 +9,13 @@ using Microsoft.UI.Xaml.Shapes;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Windows.ApplicationModel;
@@ -1169,7 +1172,7 @@ namespace WoLNamesBlackedOut
 
         private async Task movie_audio_process(string audioFile1, string videoFile2, string outvideo, bool Trim_skip)
         {
-            ProgressBar.IsIndeterminate = true;
+            //ProgressBar.IsIndeterminate = true;
             FFMpeg_text.Text = "Audio process";
             //音声分離
             string arguments = "";
@@ -1269,7 +1272,7 @@ namespace WoLNamesBlackedOut
             {
                 Debug.WriteLine("ffmpeg error: " + error.ToString());
             }
-            ProgressBar.IsIndeterminate = false;
+            //ProgressBar.IsIndeterminate = false;
             FFMpeg_text.Text = "";
 
         }
@@ -1277,11 +1280,42 @@ namespace WoLNamesBlackedOut
         {
             if (!string.IsNullOrEmpty(data))
             {
-                DispatcherQueue.TryEnqueue(() =>
+                // ffmpeg の出力例を想定: "frame= 123 fps= 37 q=-1.0 Lsize=  12345kB time=00:00:05.12 bitrate=19769.5kbits/s speed=1.23x"
+                // 下記の正規表現は、"frame="、"fps="、"time=" の数値を抽出する例です。
+                Regex regex = new Regex(@"frame=\s*(\d+).*fps=\s*([\d\.]+).*time=\s*([0-9:\.]+)", RegexOptions.IgnoreCase);
+                var match = regex.Match(data);
+                if (match.Success)
                 {
-                    FFMpeg_text.Text = (data + Environment.NewLine);
+                    // 各数値をパース
+                    if (int.TryParse(match.Groups[1].Value, out int frame_ffmpeg))
+                    {
+                        double.TryParse(match.Groups[2].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out double fps_ffmpeg);
+                        string timeStr = match.Groups[3].Value;  // 必要に応じて TimeSpan にパースできます
+                        if (TimeSpan.TryParse(timeStr, out TimeSpan timeParsed))
+                        {
+                            // timeParsed.TotalSeconds は double 型で総秒数を返す
+                            double totalSeconds = timeParsed.TotalSeconds;
 
-                });
+                            // UI の進捗表示（例: フレーム数、FPS）を更新
+                            DispatcherQueue.TryEnqueue(() =>
+                            {
+                                //double fps = fps_ffmpeg ;
+                                double percentage = ((double)frame_ffmpeg / (v_fps * (v_end_time - v_start_time)));
+                                double eta = (totalSeconds * (1 - percentage) / percentage + 0.5);
+                                Elapsed.Text = totalSeconds.ToString("F1");
+                                FPS.Text = fps_ffmpeg.ToString("F2");
+                                ETA.Text = eta.ToString("F2");
+                                ProgressBar.Value = percentage * 100;
+                            });
+                        }
+                    }
+                }
+
+                //DispatcherQueue.TryEnqueue(() =>
+                //{
+                //    FFMpeg_text.Text = (data + Environment.NewLine);
+
+                //});
             }
         }
         private void DrawingCanvas_PointerPressed(object sender, PointerRoutedEventArgs e)
@@ -1304,13 +1338,48 @@ namespace WoLNamesBlackedOut
                 startPoint = e.GetCurrentPoint(DrawingCanvas).Position;
                 isDrawing = true;
 
-                // 新しい矩形を作成
-                currentRectangle = new Rectangle
+                // ComboBoxの選択値を確認
+                string value = (string)FixedFrame_ComboBox.SelectedValue;
+
+                if (FixedFrame_color != null && FixedFrameSlideBar != null)
                 {
-                    Stroke = FixedFrame_color_icon.Foreground,
-                    Fill = FixedFrame_color_icon.Foreground,
-                    StrokeThickness = 2
-                };
+                    if (value == "Solid")
+                    {
+                        // Solidモード: プレビュー中は半透明の塗り
+                        SolidColorBrush baseBrush = (SolidColorBrush)FixedFrame_color_icon.Foreground;
+                        Color previewColor = baseBrush.Color;
+                        previewColor.A = 128;  // 半透明（0～255、ここでは128）
+                        SolidColorBrush previewBrush = new SolidColorBrush(previewColor);
+
+                        currentRectangle = new Rectangle
+                        {
+                            Stroke = baseBrush,      // ストロークは元の色で
+                            Fill = previewBrush,       // 一時的に半透明のFill
+                            StrokeThickness = 2
+                        };
+                    }
+                    else
+                    {
+                        // その他のモード: 赤い枠のみ、Fillは透明
+                        currentRectangle = new Rectangle
+                        {
+                            Stroke = new SolidColorBrush(Colors.Red),
+                            Fill = new SolidColorBrush(Colors.Transparent), // または null
+                            StrokeThickness = 2,
+                            StrokeDashArray = new DoubleCollection() { 4, 2 }  // 点線スタイルの例
+                        };
+                    }
+                }
+                else
+                {
+                    // プロパティが取得できない場合のデフォルト処理
+                    currentRectangle = new Rectangle
+                    {
+                        Stroke = FixedFrame_color_icon.Foreground,
+                        Fill = FixedFrame_color_icon.Foreground,
+                        StrokeThickness = 2
+                    };
+                }
 
                 Canvas.SetLeft(currentRectangle, startPoint.X);
                 Canvas.SetTop(currentRectangle, startPoint.Y);
@@ -1320,6 +1389,15 @@ namespace WoLNamesBlackedOut
             {
                 // 左クリックで矩形描画の完了
                 isDrawing = false;
+
+                // 描画完了時に、Solidモードなら不透明なFillに更新
+                string value = (string)FixedFrame_ComboBox.SelectedValue;
+                if (value == "Solid")
+                {
+                    // プレビュー用半透明から、完全な塗り（不透明）に変更
+                    currentRectangle.Fill = FixedFrame_color_icon.Foreground;
+                    currentRectangle.Stroke = FixedFrame_color_icon.Foreground;
+                }
 
                 // 矩形の座標を保存
                 var x = Canvas.GetLeft(currentRectangle);
@@ -1365,6 +1443,30 @@ namespace WoLNamesBlackedOut
             // 矩形の位置を更新
             Canvas.SetLeft(currentRectangle, Math.Min(startPoint.X, currentPoint.X));
             Canvas.SetTop(currentRectangle, Math.Min(startPoint.Y, currentPoint.Y));
+
+            // ComboBox の選択値をチェック
+            string value = (string)FixedFrame_ComboBox.SelectedValue;
+
+            if (value == "Solid")
+            {
+                // Solidモード: 描画中は半透明の塗りでプレビュー
+                SolidColorBrush baseBrush = (SolidColorBrush)FixedFrame_color_icon.Foreground;
+                Color previewColor = baseBrush.Color;
+                previewColor.A = 128; // 半透明（アルファ値 0～255 で調整）
+                SolidColorBrush previewBrush = new SolidColorBrush(previewColor);
+
+                currentRectangle.Stroke = baseBrush;       // ストロークは元の色で
+                currentRectangle.Fill = previewBrush;        // Fill は半透明で
+                currentRectangle.StrokeDashArray = null;       // 実線
+            }
+            else
+            {
+                // その他: 赤い点線の枠かつ内部は透明
+                currentRectangle.Stroke = new SolidColorBrush(Colors.Red);
+                currentRectangle.Fill = new SolidColorBrush(Colors.Transparent);
+                currentRectangle.StrokeDashArray = new DoubleCollection() { 4, 2 };  // 点線スタイルの例
+            }
+
         }
 
         // 矩形のみ削除するためのメソッド
@@ -1435,9 +1537,11 @@ namespace WoLNamesBlackedOut
         // 色が変更された時に矩形を再描画するメソッド
         private void RedrawRectanglesWithNewColor()
         {
-            // 新しい色を取得（例えば、FixedFrame_color_icon の色）
-            SolidColorBrush brush = (SolidColorBrush)FixedFrame_color_icon.Foreground;
-            var newColor = brush;
+            // FixedFrame_color_icon の色を取得
+            SolidColorBrush newColor = (SolidColorBrush)FixedFrame_color_icon.Foreground;
+
+            // ComboBoxの選択値を取得
+            string value = (string)FixedFrame_ComboBox.SelectedValue;
 
             // 既存の矩形を全て削除
             RemoveAllRectangles();
@@ -1453,12 +1557,27 @@ namespace WoLNamesBlackedOut
 
                 var rectangle = new Rectangle
                 {
-                    Stroke = newColor,
-                    Fill = newColor,
+                    //Stroke = newColor,
+                    //Fill = newColor,
                     StrokeThickness = 2,
                     Width = scaledRect.Width,
                     Height = scaledRect.Height
                 };
+                // 範囲に応じたスタイルを適用
+                if (value == "Solid")
+                {
+                    // 塗りつぶしあり
+                    rectangle.Stroke = newColor;
+                    rectangle.Fill = newColor;
+                }
+                else
+                {
+                    // 赤い縁取りのみ。Fillは透明に設定
+                    rectangle.Stroke = new SolidColorBrush(Colors.Red);
+                    rectangle.Fill = null;
+                    rectangle.StrokeDashArray = new DoubleCollection() { 4, 2 };  // 点線スタイルの例
+                }
+
 
                 Canvas.SetLeft(rectangle, scaledRect.X);
                 Canvas.SetTop(rectangle, scaledRect.Y);
@@ -1514,6 +1633,7 @@ namespace WoLNamesBlackedOut
                     FixedFrame_color.Visibility = Visibility.Collapsed;
                     FixedFrameSlideBar.Visibility = Visibility.Collapsed;
                 }
+                RedrawRectanglesWithNewColor();
             }
         }
     }

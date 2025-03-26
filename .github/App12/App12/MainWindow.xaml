@@ -215,9 +215,14 @@
                     </StackPanel>
                 </StackPanel>
                 <StackPanel Orientation="Vertical">
-                    <Canvas x:Name="DrawingCanvas" Background="Transparent" Height="576">
-                        <Image x:Name="image_preview" Height="576" />
-                    </Canvas>
+                    <StackPanel>
+                        <Canvas x:Name="DrawingCanvas" Background="Transparent" Height="576">
+                            <Image x:Name="image_preview" Height="576" />
+                        </Canvas>
+                    </StackPanel>
+                    <StackPanel>
+                        <TextBlock Margin="4" Text="On the preview image,&#x0a; Mouse Left-click : Set fixed frame &#x0a; Mouse Right-click: Release all fixed frames" TextWrapping="Wrap"  />
+                    </StackPanel>
                 </StackPanel>
             </StackPanel>
         </StackPanel>
