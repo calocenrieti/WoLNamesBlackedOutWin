@@ -115,6 +115,27 @@ namespace WoLNamesBlackedOut
             SaveImageButton.IsEnabled = false;
             BlackedOutStartButton.IsEnabled = false;
 
+            // LocalSettings から値を読み込む
+            var localSettings = Windows.Storage.ApplicationData.Current.LocalSettings;
+
+            // Add_Copyright の設定を読み込み
+            if (localSettings.Values.TryGetValue("Add_Copyright", out object addCopyrightValue))
+            {
+                if (bool.TryParse(addCopyrightValue.ToString(), out bool isChecked))
+                {
+                    Add_Copyright.IsChecked = isChecked;
+                }
+            }
+
+            // Use_TensorRT の設定を読み込み
+            if (localSettings.Values.TryGetValue("Use_TensorRT", out object useTensorRTValue))
+            {
+                if (bool.TryParse(useTensorRTValue.ToString(), out bool isChecked))
+                {
+                    Use_TensorRT.IsChecked = isChecked;
+                }
+            }
+
             // AppDataのパスを取得
             StorageFolder localFolder = ApplicationData.Current.LocalFolder;
             string localAppDataPath = localFolder.Path;
@@ -247,26 +268,7 @@ namespace WoLNamesBlackedOut
                 PickAFileButton.IsEnabled = true;
             }
 
-            // LocalSettings から値を読み込む
-            var localSettings = Windows.Storage.ApplicationData.Current.LocalSettings;
 
-            // Add_Copyright の設定を読み込み
-            if (localSettings.Values.TryGetValue("Add_Copyright", out object addCopyrightValue))
-            {
-                if (bool.TryParse(addCopyrightValue.ToString(), out bool isChecked))
-                {
-                    Add_Copyright.IsChecked = isChecked;
-                }
-            }
-
-            // Use_TensorRT の設定を読み込み
-            if (localSettings.Values.TryGetValue("Use_TensorRT", out object useTensorRTValue))
-            {
-                if (bool.TryParse(useTensorRTValue.ToString(), out bool isChecked))
-                {
-                    Use_TensorRT.IsChecked = isChecked;
-                }
-            }
 
 
         }
