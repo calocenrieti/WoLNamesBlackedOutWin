@@ -56,6 +56,8 @@ namespace WoLNamesBlackedOut
         private string codec;
         private string hwaccel;
         private bool trt_mode = false;
+        private bool running_state = false; // 実行中かどうかを示すフラグ
+        private bool cancel_state = false; // キャンセルかどうかを示すフラグ
 
 
         private Microsoft.UI.Xaml.DispatcherTimer timer;
@@ -98,7 +100,8 @@ namespace WoLNamesBlackedOut
         //private static extern int trt_main([MarshalAs(UnmanagedType.LPStr)] string input_video_path, [MarshalAs(UnmanagedType.LPStr)] string output_video_path, [MarshalAs(UnmanagedType.LPStr)] string codec, [MarshalAs(UnmanagedType.LPStr)] string hwaccel, int width, int height, int fps, [MarshalAs(UnmanagedType.LPStr)] string color_primaries, [In] RectInfo[] rects, int count, ColorInfo name_color, ColorInfo fixframe_color, bool inpaint, bool copyright, bool no_inference);
         [DllImport("WoLNamesBlackedOut_yolo.dll", CallingConvention = CallingConvention.Cdecl)]
         static extern int get_total_frame_count();
-
+        [DllImport("WoLNamesBlackedOut_yolo.dll", CallingConvention = CallingConvention.Cdecl)]
+        static extern bool CancelFfmpegProcesses();
         public MainWindow()
         {
             this.InitializeComponent();
@@ -204,6 +207,7 @@ namespace WoLNamesBlackedOut
                 hwaccel = "d3d11va";
                 trt_mode = false;
                 Use_TensorRT.IsEnabled = false;
+                Use_TensorRT.IsChecked= false;
                 ConvertButton.IsEnabled = false;
             }
             else if (gpuvendor == 'I')　//Intelの場合
@@ -212,6 +216,7 @@ namespace WoLNamesBlackedOut
                 hwaccel = "qsv";
                 trt_mode = false;
                 Use_TensorRT.IsEnabled = false;
+                Use_TensorRT.IsChecked = false;
                 ConvertButton.IsEnabled = false;
             }
             else //その他のベンダーの場合(gpuvendor == 'X')
@@ -241,10 +246,40 @@ namespace WoLNamesBlackedOut
             {
                 PickAFileButton.IsEnabled = true;
             }
-            
+
+            // LocalSettings から値を読み込む
+            var localSettings = Windows.Storage.ApplicationData.Current.LocalSettings;
+
+            // Add_Copyright の設定を読み込み
+            if (localSettings.Values.TryGetValue("Add_Copyright", out object addCopyrightValue))
+            {
+                if (bool.TryParse(addCopyrightValue.ToString(), out bool isChecked))
+                {
+                    Add_Copyright.IsChecked = isChecked;
+                }
+            }
+
+            // Use_TensorRT の設定を読み込み
+            if (localSettings.Values.TryGetValue("Use_TensorRT", out object useTensorRTValue))
+            {
+                if (bool.TryParse(useTensorRTValue.ToString(), out bool isChecked))
+                {
+                    Use_TensorRT.IsChecked = isChecked;
+                }
+            }
+
 
         }
+        private void Window_Closed(object sender, WindowEventArgs e)
+        {
+            //ウィンドウが閉じた際のイベント
+            var localSettings = Windows.Storage.ApplicationData.Current.LocalSettings;
 
+            // チェックボックスの状態を保存する
+            localSettings.Values["Add_Copyright"] = Add_Copyright.IsChecked;
+            localSettings.Values["Use_TensorRT"] = Use_TensorRT.IsChecked;
+
+        }
         private void Timer_Tick(object? sender, object e)
         {
 
@@ -266,6 +301,7 @@ namespace WoLNamesBlackedOut
         private async void PickAFileButton_Click(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
         {
             UIControl_enable_false();
+            running_state = true;
 
             // Clear previous returned file name, if it exists, between iterations of this scenario
             PickAFileOutputTextBlock.Text = "";
@@ -361,6 +397,7 @@ namespace WoLNamesBlackedOut
                             ProgressBar.IsIndeterminate = false;
 
                             UIControl_enable_true();
+                            running_state = false;
 
                             // 描画されている矩形を全て消去
                             RemoveAllRectangles();
@@ -435,6 +472,7 @@ namespace WoLNamesBlackedOut
 
             ProgressBar.IsIndeterminate = false;
             UIControl_enable_true();
+            running_state= false;
         }
 
         public class FrameProcessor
@@ -847,6 +885,7 @@ namespace WoLNamesBlackedOut
             ProgressBar.IsIndeterminate = true;
             //PreviewButton.IsEnabled = false;
             UIControl_enable_false();
+            running_state = true;
 
             // 現在の日時を使用してユニークなファイル名を作成し、一時ディレクトリに保存
             string tempDirectory = System.IO.Path.GetTempPath();
@@ -919,6 +958,7 @@ namespace WoLNamesBlackedOut
                 ProgressBar.IsIndeterminate = false;
                 //PreviewButton.IsEnabled = true;
                 UIControl_enable_true();
+                running_state = false;
 
                 // 描画されている矩形を全て消去
                 RemoveAllRectangles();
@@ -1002,6 +1042,7 @@ namespace WoLNamesBlackedOut
             else
             {
                 UIControl_enable_false();
+                running_state = true;
                 bool Trim_skip = true;
                 string tempDirectory = System.IO.Path.GetTempPath();
                 string video_temp_filename_1 = System.IO.Path.Combine(tempDirectory, $"tmp_wol_{DateTime.Now:yyyyMMddHHmmssfff}_1.mp4");
@@ -1108,6 +1149,7 @@ namespace WoLNamesBlackedOut
                     g = FixedFrame_color_icon_color.G,
                     b = FixedFrame_color_icon_color.B
                 };
+                StopButton.IsEnabled = true;
                 stopwatch.Reset();
                 stopwatch.Start();
                 timer.Start();
@@ -1126,47 +1168,60 @@ namespace WoLNamesBlackedOut
 
                 stopwatch.Stop();
                 timer.Stop();
+                StopButton.IsEnabled = false;
 
-                await movie_audio_process(audio_temp_filename, video_temp_filename_2, video_temp_filename_3, Trim_skip);
-
-                //
-                var picker = new FileSavePicker();
-                InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
-                picker.SuggestedStartLocation = PickerLocationId.VideosLibrary;
-                picker.FileTypeChoices.Add("MP4", new List<string>() { ".mp4" });
-                picker.DefaultFileExtension = ".mp4";
-                picker.SuggestedFileName = "output";
-
-                StorageFile file = await picker.PickSaveFileAsync();
-                if (file != null)
+                if (cancel_state == true)
                 {
-                    try
-                    {
-                        // last_preview_image のファイルパスを取得
-                        var sourceFile = await StorageFile.GetFileFromPathAsync(video_temp_filename_3);
+                    StopButton_icon.Glyph = "\uE71A";
+                    InfoBar.Message = "Canceled";
+                    InfoBar.Severity = InfoBarSeverity.Warning;
+                    InfoBar.IsOpen = true;
+                    InfoBar.Visibility = Visibility.Visible;
+                }
+                else
+                {
+                    await movie_audio_process(audio_temp_filename, video_temp_filename_2, video_temp_filename_3, Trim_skip);
 
-                        // コピー先のファイルストリームを開く
-                        using (var sourceStream = await sourceFile.OpenAsync(FileAccessMode.Read))
-                        using (var destinationStream = await file.OpenAsync(FileAccessMode.ReadWrite))
-                        {
-                            // ストリームの内容をコピー
-                            await sourceStream.AsStreamForRead().CopyToAsync(destinationStream.AsStreamForWrite());
-                        }
-                        InfoBar.Message = "output video is saved";
-                        InfoBar.Severity = InfoBarSeverity.Success;
-                        InfoBar.IsOpen = true;
-                        InfoBar.Visibility = Visibility.Visible;
-                    }
-                    catch (Exception ex)
+                    //
+                    var picker = new FileSavePicker();
+                    InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
+                    picker.SuggestedStartLocation = PickerLocationId.VideosLibrary;
+                    picker.FileTypeChoices.Add("MP4", new List<string>() { ".mp4" });
+                    picker.DefaultFileExtension = ".mp4";
+                    picker.SuggestedFileName = "output";
+
+                    StorageFile file = await picker.PickSaveFileAsync();
+                    if (file != null)
                     {
-                        InfoBar.Message = "Save failed";
-                        InfoBar.Severity = InfoBarSeverity.Error;
-                        InfoBar.IsOpen = true;
-                        InfoBar.Visibility = Visibility.Visible;
+                        try
+                        {
+                            // last_preview_image のファイルパスを取得
+                            var sourceFile = await StorageFile.GetFileFromPathAsync(video_temp_filename_3);
+
+                            // コピー先のファイルストリームを開く
+                            using (var sourceStream = await sourceFile.OpenAsync(FileAccessMode.Read))
+                            using (var destinationStream = await file.OpenAsync(FileAccessMode.ReadWrite))
+                            {
+                                // ストリームの内容をコピー
+                                await sourceStream.AsStreamForRead().CopyToAsync(destinationStream.AsStreamForWrite());
+                            }
+                            InfoBar.Message = "output video is saved";
+                            InfoBar.Severity = InfoBarSeverity.Success;
+                            InfoBar.IsOpen = true;
+                            InfoBar.Visibility = Visibility.Visible;
+                        }
+                        catch (Exception ex)
+                        {
+                            InfoBar.Message = "Save failed";
+                            InfoBar.Severity = InfoBarSeverity.Error;
+                            InfoBar.IsOpen = true;
+                            InfoBar.Visibility = Visibility.Visible;
+                        }
                     }
                 }
-
+                cancel_state= false;
                 UIControl_enable_true();
+                running_state = false;
             }
         }
 
@@ -1320,6 +1375,10 @@ namespace WoLNamesBlackedOut
         }
         private void DrawingCanvas_PointerPressed(object sender, PointerRoutedEventArgs e)
         {
+            if (running_state == true)
+            {
+                return;
+            }
             if (e.GetCurrentPoint(DrawingCanvas).Properties.IsRightButtonPressed)
             {
                 // 右クリックで矩形座標をリセット
@@ -1425,7 +1484,7 @@ namespace WoLNamesBlackedOut
 
         private void DrawingCanvas_PointerMoved(object sender, PointerRoutedEventArgs e)
         {
-            if (!isDrawing || currentRectangle == null)
+            if (!isDrawing || currentRectangle == null || running_state == true)
             {
                 return;
             }
@@ -1488,6 +1547,7 @@ namespace WoLNamesBlackedOut
         private async void ConvertButton_Click(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
         {
             UIControl_enable_false();
+            running_state = true;
             ProgressBar.IsIndeterminate = true;
             stopwatch.Reset();
             stopwatch.Start();
@@ -1504,6 +1564,7 @@ namespace WoLNamesBlackedOut
             timer.Stop();
 
             UIControl_enable_true();
+            running_state= false;
             ProgressBar.IsIndeterminate = false;
             Console.WriteLine("変換成功");
             InfoBar.Severity = InfoBarSeverity.Success;
@@ -1530,8 +1591,10 @@ namespace WoLNamesBlackedOut
 
         private void StopButton_Click(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
         {
-            // タスクをキャンセル
-            cancellationTokenSource.Cancel();
+            CancelFfmpegProcesses();
+            cancel_state = true;
+            StopButton_icon.Glyph = "\uE916";
+
         }
 
         // 色が変更された時に矩形を再描画するメソッド
