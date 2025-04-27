@@ -617,8 +617,8 @@ namespace WoLNamesBlackedOut
             // カラーピッカーを追加
             ColorPicker colorPicker = new ColorPicker();
             colorPicker.IsColorSpectrumVisible = true;
-            colorPicker.IsAlphaEnabled = true;
-            colorPicker.IsAlphaSliderVisible = true;
+            //colorPicker.IsAlphaEnabled = true;
+            //colorPicker.IsAlphaSliderVisible = true;
             colorPicker.ColorSpectrumShape = ColorSpectrumShape.Box;
             colorPicker.IsMoreButtonVisible = false;
             colorPicker.IsColorSliderVisible = true;
@@ -627,6 +627,25 @@ namespace WoLNamesBlackedOut
             colorPicker.IsAlphaEnabled = false;
             colorPicker.IsAlphaSliderVisible = true;
             colorPicker.IsAlphaTextInputVisible = true;
+
+            // ボタン内の FontIcon の色を取得し、初回なら白を選択するようにする
+            if (clickedButton != null && clickedButton.Content is StackPanel stackPanel)
+            {
+                var fontIcon = stackPanel.Children.OfType<FontIcon>().FirstOrDefault();
+                if (fontIcon != null && fontIcon.Foreground is SolidColorBrush brush)
+                {
+                    // 既定の色である黒の場合、初回は白 (Colors.White) を初期値にする
+                    if (brush.Color == Microsoft.UI.Colors.Black)
+                    {
+                        colorPicker.Color = Microsoft.UI.Colors.White;
+                    }
+                    else
+                    {
+                        // 既にユーザーが色を選択している場合、その色を使用
+                        colorPicker.Color = brush.Color;
+                    }
+                }
+            }
 
             stack.Children.Add(colorPicker);
 
@@ -650,9 +669,9 @@ namespace WoLNamesBlackedOut
                 // OK ボタンが押された場合の処理
                 var selectedColor = colorPicker.Color;
                 // 選択された色を呼び出し元のボタンのアイコンの色に設定
-                if (clickedButton != null && clickedButton.Content is StackPanel stackPanel)
+                if (clickedButton != null && clickedButton.Content is StackPanel sp)
                 {
-                    var fontIcon = stackPanel.Children.OfType<FontIcon>().FirstOrDefault();
+                    var fontIcon = sp.Children.OfType<FontIcon>().FirstOrDefault();
                     if (fontIcon != null)
                     {
                         fontIcon.Foreground = new SolidColorBrush(selectedColor);
