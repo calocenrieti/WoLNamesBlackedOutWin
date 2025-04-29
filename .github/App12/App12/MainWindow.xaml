@@ -95,13 +95,6 @@
                         <CheckBox x:Name="Add_Copyright" Content="Add_Copyright" IsChecked="True" Margin="4,0,0,0" />
                         <CheckBox x:Name="Use_TensorRT" Content="Use_TensorRT" Margin="12,0,0,0"/>
                     </StackPanel>
-                    <!--<StackPanel Orientation="Horizontal"  Margin="20,0,0,0" Visibility="Collapsed">
-                        <CheckBox x:Name="Inpaint" Content="Inpaint" Margin="4,0,0,0"/>
-                        <CheckBox x:Name="No_Inference" Content="No_Inference" Margin="4,0,0,0"/>
-                    </StackPanel>-->
-                
-
-
 
                     <Line Stroke="Gray" X1="10" Y1="0" X2="470" Y2="0" StrokeThickness="1" Margin="0,8,12,0"/>
                     <!-- Preview Section -->
@@ -112,13 +105,13 @@
                             <Slider x:Name="FrameSlideBar" Minimum="0" Maximum="100" Width="300" HorizontalAlignment="Left" Margin="4" ValueChanged="FrameSlideBar_ValueChanged"/>
                             <StackPanel Orientation="Horizontal">
                                 <StackPanel VerticalAlignment="Center" HorizontalAlignment="Right" Margin="4">
-                                    <TextBlock x:Name="FrameTextBlock_n" Text="0" HorizontalTextAlignment="Right" VerticalAlignment="Center"/>
+                                    <TextBlock x:Name="FrameTextBlock_n" Text="0:00" HorizontalTextAlignment="Right" VerticalAlignment="Center"/>
                                 </StackPanel>
                                 <StackPanel VerticalAlignment="Center">
                                     <TextBlock Text="/" HorizontalTextAlignment="Right" VerticalAlignment="Center"/>
                                 </StackPanel>
                                 <StackPanel VerticalAlignment="Center" HorizontalAlignment="Right" Margin="4">
-                                    <TextBlock x:Name="FrameTextBlock_e" Text="00000" HorizontalTextAlignment="Right" VerticalAlignment="Center"/>
+                                    <TextBlock x:Name="FrameTextBlock_e" Text="0:00" HorizontalTextAlignment="Right" VerticalAlignment="Center"/>
                                 </StackPanel>
                             </StackPanel>
                         </StackPanel>

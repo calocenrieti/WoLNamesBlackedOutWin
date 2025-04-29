@@ -465,7 +465,7 @@ namespace WoLNamesBlackedOut
                             FrameSlideBar.Value = 0;
 
                             FrameSlideBar.Maximum = all_sec - mod_frame_sec;
-                            FrameTextBlock_e.Text = $"{FrameSlideBar.Maximum}";
+                            FrameTextBlock_e.Text = $"{all_min}:{mod_sec.ToString("D2")}";
                         }
                         //Debug.WriteLine($"Color Primaries: {properties["color_primaries"]}");
                         v_color_primaries = properties["color_primaries"];
@@ -833,8 +833,27 @@ namespace WoLNamesBlackedOut
         private void FrameSlideBar_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
         {
             // 現在のスライダーの値を取得
+
             int currentFrame = (int)e.NewValue;
-            FrameTextBlock_n.Text = $"{currentFrame}";
+            //FrameTextBlock_n.Text = $"{currentFrame}";
+            float n_mod_frame = (float)(currentFrame % v_fps);
+            int n_mod_frame_sec = 1;
+            if (n_mod_frame > 0)
+            {
+                n_mod_frame_sec = 1;
+            }
+            else
+            {
+                n_mod_frame_sec = 0;
+            }
+            int n_min = (int)(currentFrame / 60);
+            int n_mod_sec = (int)(currentFrame - n_min * 60) + n_mod_frame_sec;
+            if (n_mod_sec == 60)
+            {
+                n_min = n_min + 1;
+                n_mod_sec = 0;
+            }
+            FrameTextBlock_n.Text = $"{n_min}:{n_mod_sec.ToString("D2")}";
         }
         private async void AboutButton_Click(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
         {
