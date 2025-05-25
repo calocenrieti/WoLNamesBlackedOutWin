@@ -153,7 +153,9 @@
                             <StackPanel>
                                 <NumberBox x:Name="End_sec" Header="End_sec:" Value="0"  SpinButtonPlacementMode="Compact" SmallChange="1"    LargeChange="10"   Minimum="0"  Maximum="59"/>
                             </StackPanel>
-
+                            <StackPanel Margin="4" Orientation="Vertical"  VerticalAlignment="Top">
+                                <Slider x:Name="BitrateSlideBar" Header="Bitrate(Mbps)" Value="11" Minimum="1" Maximum="20" Width="130" HorizontalAlignment="Left" Margin="8,0,0,0" />
+                            </StackPanel>
                         </StackPanel>
                         <StackPanel  Orientation="Horizontal"  Margin="12,4,4,4" >
                             <StackPanel Margin="0,4,0,0">
