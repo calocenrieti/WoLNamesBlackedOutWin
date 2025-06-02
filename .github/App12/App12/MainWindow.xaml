@@ -6,12 +6,14 @@
         Title="WoLNamesBlackedOut" 
         Closed="Window_Closed"
         >
-    <Grid>
+    <Grid x:Name="RootGrid" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
         <StackPanel HorizontalAlignment="Stretch">
             <StackPanel  Height="44"  Orientation="Horizontal" x:Name="TitleBar" HorizontalAlignment="Stretch" VerticalAlignment="Top">
                 <TextBlock VerticalAlignment="Center" Text="WoLNamesBlackedOut"  Style="{StaticResource HeaderTextBlockStyle}" FontSize="24" FontWeight="Black" Margin="16,0,0,0"/>
                 <CommandBar Background="Transparent" IsOpen="False" DefaultLabelPosition="Right">
-                    <AppBarButton Icon="More" Margin="150,0,0,0" >
+
+
+                    <AppBarButton Icon="More" Margin="150,0,0,0" ToolTipService.ToolTip="More...">
                         <AppBarButton.Flyout>
                             <MenuFlyout >
                                 <MenuFlyoutItem x:Name="ConvertButton" Text="Convert ONNX to TensorRT" Click="ConvertButton_Click"/>
@@ -21,8 +23,15 @@
                             </MenuFlyout>
                         </AppBarButton.Flyout>
                     </AppBarButton>
-                    <AppBarButton Icon="Save" Label="Save Image"  Margin="4,0,0,0"  x:Name="SaveImageButton" Click="SaveImageButton_Click" />
+                    <AppBarButton Icon="Save" Label="Save Image"  Margin="4,0,0,0"  x:Name="SaveImageButton" Click="SaveImageButton_Click" ToolTipService.ToolTip="Save Preview Image"/>
+                    <AppBarButton Click="ToggleThemeButton_Click" Margin="8,0,0,0" ToolTipService.ToolTip="Change Theme">
+                        <AppBarButton.Icon>
+                            <FontIcon Glyph="&#xE793;"/>
+                        </AppBarButton.Icon>
+                    </AppBarButton>
+
                 </CommandBar>
+
             </StackPanel>
             <StackPanel HorizontalAlignment="Left" Orientation="Horizontal">
                 <StackPanel >
@@ -34,7 +43,7 @@
                             <Button x:Name="PickAFileButton" Click="PickAFileButton_Click" >
                                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
                                     <FontIcon Glyph="&#xE8E5;" />
-                                    <TextBlock Text=" Open_File" VerticalAlignment="Center" Margin="4,0,0,0"/>
+                                    <TextBlock Text=" Open_File" VerticalAlignment="Center" Margin="4,0,0,0" />
                                 </StackPanel>
                             </Button>
                             <TextBlock x:Name="PickAFileOutputTextBlock" TextWrapping="Wrap" MaxWidth="400"  Padding="8,0,0,0" VerticalAlignment="Center" Grid.Column="2"/>
