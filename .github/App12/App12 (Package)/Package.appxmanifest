@@ -10,7 +10,7 @@
   <Identity
     Name="CalocenRieti.WoLNamesBlackedOut"
     Publisher="CN=B3F1F031-A8D4-43F9-883A-90E585DBF22B"
-    Version="1.4.2.0" />
+    Version="1.4.3.0" />
 
   <mp:PhoneIdentity PhoneProductId="6a380d43-5352-48b9-a6c4-b187fa8e0c1f" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 
