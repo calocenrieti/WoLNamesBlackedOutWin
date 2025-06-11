@@ -6,3 +6,6 @@ WoLNamesBlackedOutのWindows GUIをC# WinUI3で作成しました。<br>
 dllはコードは下記にあります。<br>
 https://github.com/calocenrieti/WoLNamesBlackedOut_yolo<br>
 https://github.com/calocenrieti/WoLNamesBlackedOut_util<br>
+<br>
+インストールはMicrosoftストアから<br>
+https://apps.microsoft.com/detail/9P5W7QTSH297?hl=ja-jp&gl=JP&ocid=pdpshare
