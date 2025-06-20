@@ -369,7 +369,21 @@ namespace WoLNamesBlackedOut
             localSettings.Values["Bitrate"] = BitrateSlideBar.Value;
             localSettings.Values["AppTheme"] = RootGrid.ActualTheme == ElementTheme.Light ? "Light" : "Dark";
 
-
+            // tempDirectory 内の "tmp_wol_*.*" にマッチするファイル一覧を取得する
+            string tempDirectory = System.IO.Path.GetTempPath();
+            string[] tmpFiles = Directory.GetFiles(tempDirectory, "tmp_wol_*.*");
+            foreach (string file in tmpFiles)
+            {
+                try
+                {
+                    File.Delete(file);
+                }
+                catch (Exception ex)
+                {
+                    // 削除に失敗した場合の例外処理（ログ出力などを検討してください）
+                    Console.WriteLine($"ファイル '{file}' の削除に失敗しました: {ex.Message}");
+                }
+            }
         }
         private void ToggleTheme()
         {
@@ -451,7 +465,7 @@ namespace WoLNamesBlackedOut
                 {
                     // 現在の日時を使用してユニークなファイル名を作成し、一時ディレクトリに保存
                     string tempDirectory = System.IO.Path.GetTempPath();
-                    string fileName = $"wol_{DateTime.Now:yyyyMMddHHmmssfff}.png";
+                    string fileName = $"tmp_wol_{DateTime.Now:yyyyMMddHHmmssfff}.png";
                     string outputPath = System.IO.Path.Combine(tempDirectory, fileName);
 
                     File.Copy(v_file_path, outputPath, true);
@@ -981,6 +995,7 @@ namespace WoLNamesBlackedOut
                         new TextBlock { Text = versionText, FontSize=16,Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 12) ,HorizontalAlignment = HorizontalAlignment.Center},
                         new HyperlinkButton { Content = "Calocen Rieti(Twitter)", NavigateUri = new Uri("https://x.com/calcMCalcm"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                         new HyperlinkButton { Content = "Support Site", NavigateUri = new Uri("https://blog.calocenrieti.com/blog/wol_names_blacked_out_win/"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center},
+                        new HyperlinkButton { Content = "Discord", NavigateUri = new Uri("https://discord.gg/q2Hqr4tD8v"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center},
                         new HyperlinkButton { Content = "GitHub", NavigateUri = new Uri("https://github.com/calocenrieti/WoLNamesBlackedOutWin"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 12) ,HorizontalAlignment = HorizontalAlignment.Center},
                         new TextBlock { Text = "This software contains source code provided by NVIDIA Corporation.", FontSize=12,Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 8) ,HorizontalAlignment = HorizontalAlignment.Center ,TextWrapping=TextWrapping.Wrap},
                         new TextBlock { Text = "This software uses FFmpeg.exe licensed under the LGPLv2.1 \nand its source can be downloaded https://github.com/FFmpeg/FFmpeg.git", FontSize=12,Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 8) ,HorizontalAlignment = HorizontalAlignment.Center,TextWrapping=TextWrapping.Wrap}
@@ -1045,7 +1060,7 @@ namespace WoLNamesBlackedOut
 
             // 現在の日時を使用してユニークなファイル名を作成し、一時ディレクトリに保存
             string tempDirectory = System.IO.Path.GetTempPath();
-            string fileName = $"wol_{DateTime.Now:yyyyMMddHHmmssfff}.png";
+            string fileName = $"tmp_wol_{DateTime.Now:yyyyMMddHHmmssfff}.png";
             string outputPath = System.IO.Path.Combine(tempDirectory, fileName);
             string PickAFileOutputTextBlock_text = PickAFileOutputTextBlock.Text;
 
