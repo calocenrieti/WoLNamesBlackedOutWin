@@ -53,6 +53,9 @@
     <None Remove="my_yolov8m_s.onnx" />
     <None Remove="my_yolov8m_s_32.onnx" />
     <None Remove="my_yolov8m_s_dy.onnx" />
+    <None Remove="nvinfer_10.dll" />
+    <None Remove="nvinfer_builder_resource_10.dll" />
+    <None Remove="nvonnxparser_10.dll" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="cudart64_12.dll">
@@ -219,7 +222,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3296.44" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3351.48" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.4188" />
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.7.250606001" />
   </ItemGroup>
