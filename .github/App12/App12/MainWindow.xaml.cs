@@ -60,6 +60,7 @@ namespace WoLNamesBlackedOut
         private bool trt_mode = false;
         private bool running_state = false; // 実行中かどうかを示すフラグ
         private bool cancel_state = false; // キャンセルかどうかを示すフラグ
+        private bool v_hasAudio = true; // 音声があるかどうかを示すフラグ
 
 
         private Microsoft.UI.Xaml.DispatcherTimer timer;
@@ -591,6 +592,7 @@ namespace WoLNamesBlackedOut
                         }
                         //Debug.WriteLine($"Color Primaries: {properties["color_primaries"]}");
                         v_color_primaries = properties["color_primaries"];
+                        v_hasAudio = properties.TryGetValue("has_audio", out var audioValue) && audioValue == "true";
                     }
 
                 }
@@ -839,6 +841,37 @@ namespace WoLNamesBlackedOut
             await process.WaitForExitAsync();
 
             var properties = ParseFfprobeOutput(output.ToString());
+
+            // 音声ストリームの有無を判定
+            var audioArguments = $"-v error -select_streams a -show_entries stream=index -of default=nw=1:nk=1 \"{file.Path}\"";
+            var audioProcessStartInfo = new ProcessStartInfo
+            {
+                FileName = ffprobePath,
+                Arguments = audioArguments,
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            var audioProcess = new Process { StartInfo = audioProcessStartInfo };
+            var audioOutput = new StringBuilder();
+
+            audioProcess.OutputDataReceived += (sender, e) =>
+            {
+                if (!string.IsNullOrEmpty(e.Data))
+                {
+                    audioOutput.AppendLine(e.Data);
+                }
+            };
+
+            audioProcess.Start();
+            audioProcess.BeginOutputReadLine();
+            await audioProcess.WaitForExitAsync();
+
+            // audioOutputが空でなければ音声あり
+            bool hasAudio = !string.IsNullOrWhiteSpace(audioOutput.ToString());
+            properties["has_audio"] = hasAudio.ToString().ToLower(); // "true" or "false"
+
             return properties;
         }
 
@@ -1369,8 +1402,15 @@ namespace WoLNamesBlackedOut
                 }
                 else
                 {
-                    await movie_audio_process(audio_temp_filename, video_temp_filename_2, video_temp_filename_3, Trim_skip, v_bitrate);
+                    if (v_hasAudio)
+                    {
+                        await movie_audio_process(audio_temp_filename, video_temp_filename_2, video_temp_filename_3, Trim_skip, v_bitrate);
+                    }
+                    else 
+                    {
+                        video_temp_filename_3= video_temp_filename_2;
 
+                    }
                     //
                     var picker = new FileSavePicker();
                     InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
@@ -1479,7 +1519,8 @@ namespace WoLNamesBlackedOut
             arguments = "";
             if (Trim_skip == true)
             {
-                arguments = $" -i \"{audioFile1}\" -i \"{videoFile2}\" -c:v copy -c:a copy -movflags faststart \"{outvideo}\"";
+                //arguments = $" -i \"{audioFile1}\" -i \"{videoFile2}\" -c:v copy -c:a copy -movflags faststart \"{outvideo}\"";
+                arguments = $" -i \"{audioFile1}\" -i \"{videoFile2}\" -c:v copy -c:a copy \"{outvideo}\"";
 
             }
             else
