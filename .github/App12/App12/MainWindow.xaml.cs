@@ -622,7 +622,8 @@ namespace WoLNamesBlackedOut
                 [MarshalAs(UnmanagedType.LPStr)] string fixedFrame,
                 int blackedout_param,
                 int fixedFrame_param,
-                [MarshalAs(UnmanagedType.LPStr)] string bitrate
+                [MarshalAs(UnmanagedType.LPStr)] string bitrate,
+                [MarshalAs(UnmanagedType.LPStr)] string preset
                 );
 
             [DllImport("WoLNamesBlackedOut_yolo.dll", CallingConvention = CallingConvention.Cdecl)]
@@ -641,7 +642,8 @@ namespace WoLNamesBlackedOut
                 [MarshalAs(UnmanagedType.LPStr)] string fixedFrame,
                 int blackedout_param,
                 int fixedFrame_param,
-                [MarshalAs(UnmanagedType.LPStr)] string bitrate
+                [MarshalAs(UnmanagedType.LPStr)] string bitrate,
+                [MarshalAs(UnmanagedType.LPStr)] string preset
                 );
 
             [DllImport("WoLNamesBlackedOut_yolo.dll", CallingConvention = CallingConvention.Cdecl)]
@@ -665,10 +667,11 @@ namespace WoLNamesBlackedOut
                 int width, int height, int fps, string colorPrimaries, RectInfo[] rects,
                 int count, ColorInfo nameColor, ColorInfo fixframeColor,
                 //bool inpaint, bool copyright, bool noInference)
-                bool copyright, string blackedOut, string fixedFrame, int blackedout_param, int fixedFrame_param, string bitrate)
+                bool copyright, string blackedOut, string fixedFrame, int blackedout_param, int fixedFrame_param, string bitrate, string preset)
             {
                 //return Task.Run(() => dml_main(inputVideoPath, outputVideoPath, codec, hwaccel, width, height, fps, colorPrimaries, rects, count, nameColor, fixframeColor, inpaint, copyright, noInference));
-                return Task.Run(() => dml_main(inputVideoPath, outputVideoPath, codec, hwaccel, width, height, fps, colorPrimaries, rects, count, nameColor, fixframeColor, copyright, blackedOut,fixedFrame, blackedout_param, fixedFrame_param,bitrate));
+                //return Task.Run(() => dml_main(inputVideoPath, outputVideoPath, codec, hwaccel, width, height, fps, colorPrimaries, rects, count, nameColor, fixframeColor, copyright, blackedOut,fixedFrame, blackedout_param, fixedFrame_param,bitrate));
+                return Task.Run(() => dml_main(inputVideoPath, outputVideoPath, codec, hwaccel, width, height, fps, colorPrimaries, rects, count, nameColor, fixframeColor, copyright, blackedOut,fixedFrame, blackedout_param, fixedFrame_param,bitrate,preset));
             }
 
             public static Task<int> RunTrtMainAsync(
@@ -676,10 +679,11 @@ namespace WoLNamesBlackedOut
                 int width, int height, int fps, string colorPrimaries, RectInfo[] rects,
                 int count, ColorInfo nameColor, ColorInfo fixframeColor,
                  //bool inpaint, bool copyright, bool noInference)
-                 bool copyright, string blackedOut, string fixedFrame, int blackedout_param, int fixedFrame_param, string bitrate)
+                 bool copyright, string blackedOut, string fixedFrame, int blackedout_param, int fixedFrame_param, string bitrate,string preset)
             {
                 //return Task.Run(() => trt_main(inputVideoPath, outputVideoPath, codec, hwaccel, width, height, fps, colorPrimaries, rects, count, nameColor, fixframeColor, inpaint, copyright, noInference));
-                return Task.Run(() => trt_main(inputVideoPath, outputVideoPath, codec, hwaccel, width, height, fps, colorPrimaries, rects, count, nameColor, fixframeColor, copyright,blackedOut,fixedFrame, blackedout_param, fixedFrame_param,bitrate));
+                //return Task.Run(() => trt_main(inputVideoPath, outputVideoPath, codec, hwaccel, width, height, fps, colorPrimaries, rects, count, nameColor, fixframeColor, copyright,blackedOut,fixedFrame, blackedout_param, fixedFrame_param,bitrate));
+                return Task.Run(() => trt_main(inputVideoPath, outputVideoPath, codec, hwaccel, width, height, fps, colorPrimaries, rects, count, nameColor, fixframeColor, copyright, blackedOut, fixedFrame, blackedout_param, fixedFrame_param, bitrate, preset));
             }
             public static Task<int> Runpreview_apiAsync(
                 string image_path_str,
@@ -1378,12 +1382,12 @@ namespace WoLNamesBlackedOut
                 if (Use_TensorRT.IsChecked == true && (string)BlackedOut_ComboBox.SelectedValue != "No_Inference")
                 {
                     //await FrameProcessor.RunTrtMainAsync(video_temp_filename_1, video_temp_filename_2, codec, hwaccel, v_width, v_height, v_fps, v_color_primaries, rectInfos, rectInfos.Length, BlackedOut_color_icon_color_info, FixedFrame_color_icon_color_Info, Inpaint.IsChecked.Value, Add_Copyright.IsChecked.Value, noInference: !No_Inference.IsChecked.Value);
-                    await FrameProcessor.RunTrtMainAsync(video_temp_filename_1, video_temp_filename_2, codec, hwaccel, v_width, v_height, v_fps, v_color_primaries, rectInfos, rectInfos.Length, BlackedOut_color_icon_color_info, FixedFrame_color_icon_color_Info, Add_Copyright.IsChecked.Value, (string)BlackedOut_ComboBox.SelectedValue, (string)FixedFrame_ComboBox.SelectedValue, (int)BlackedOutSlideBar.Value, (int)FixedFrameSlideBar.Value, v_bitrate);
+                    await FrameProcessor.RunTrtMainAsync(video_temp_filename_1, video_temp_filename_2, codec, hwaccel, v_width, v_height, v_fps, v_color_primaries, rectInfos, rectInfos.Length, BlackedOut_color_icon_color_info, FixedFrame_color_icon_color_Info, Add_Copyright.IsChecked.Value, (string)BlackedOut_ComboBox.SelectedValue, (string)FixedFrame_ComboBox.SelectedValue, (int)BlackedOutSlideBar.Value, (int)FixedFrameSlideBar.Value, v_bitrate,preset);
                 }
                 else
                 {
                     //await FrameProcessor.RunDmlMainAsync(video_temp_filename_1, video_temp_filename_2, codec, hwaccel, v_width, v_height, v_fps, v_color_primaries, rectInfos, rectInfos.Length, BlackedOut_color_icon_color_info, FixedFrame_color_icon_color_Info, Inpaint.IsChecked.Value, Add_Copyright.IsChecked.Value, noInference: !No_Inference.IsChecked.Value);
-                    await FrameProcessor.RunDmlMainAsync(video_temp_filename_1, video_temp_filename_2, codec, hwaccel, v_width, v_height, v_fps, v_color_primaries, rectInfos, rectInfos.Length, BlackedOut_color_icon_color_info, FixedFrame_color_icon_color_Info, Add_Copyright.IsChecked.Value, (string)BlackedOut_ComboBox.SelectedValue, (string)FixedFrame_ComboBox.SelectedValue, (int)BlackedOutSlideBar.Value, (int)FixedFrameSlideBar.Value, v_bitrate);
+                    await FrameProcessor.RunDmlMainAsync(video_temp_filename_1, video_temp_filename_2, codec, hwaccel, v_width, v_height, v_fps, v_color_primaries, rectInfos, rectInfos.Length, BlackedOut_color_icon_color_info, FixedFrame_color_icon_color_Info, Add_Copyright.IsChecked.Value, (string)BlackedOut_ComboBox.SelectedValue, (string)FixedFrame_ComboBox.SelectedValue, (int)BlackedOutSlideBar.Value, (int)FixedFrameSlideBar.Value, v_bitrate, preset);
                 }
 
                 stopwatch.Stop();
