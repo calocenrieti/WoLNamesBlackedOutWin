@@ -6,7 +6,7 @@
         Title="WoLNamesBlackedOut" 
         Closed="Window_Closed"
         >
-    <Grid x:Name="RootGrid" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+    <Grid x:Name="RootGrid" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}" AllowDrop="True" Drop="RootGrid_Drop" DragOver="RootGrid_DragOver">
         <StackPanel HorizontalAlignment="Stretch">
             <Grid  Height="44"  x:Name="TitleBar" HorizontalAlignment="Stretch" VerticalAlignment="Top">
                 <Grid.ColumnDefinitions>
@@ -58,7 +58,7 @@
             <StackPanel HorizontalAlignment="Left" Orientation="Horizontal">
                 <StackPanel >
                     <!-- Select File Section -->
-                    <TextBlock  Text="Select File" Style="{StaticResource SubheaderTextBlockStyle}" FontWeight="Bold" FontSize="16" Margin="20,4,4,4" VerticalAlignment="Center"></TextBlock>
+                    <TextBlock  Text="Select File or Drag and Drop File" Style="{StaticResource SubheaderTextBlockStyle}" FontWeight="Bold" FontSize="16" Margin="20,4,4,4" VerticalAlignment="Center"></TextBlock>
 
                     <StackPanel >
                         <StackPanel Orientation="Horizontal" Margin="12,4,4,4">
