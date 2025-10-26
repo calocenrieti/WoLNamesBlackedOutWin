@@ -6,7 +6,10 @@
         Title="WoLNamesBlackedOut" 
         Closed="Window_Closed"
         >
-    <Grid x:Name="RootGrid" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}" AllowDrop="True" Drop="RootGrid_Drop" DragOver="RootGrid_DragOver">
+    <Window.SystemBackdrop>
+        <MicaBackdrop Kind="BaseAlt"/>
+    </Window.SystemBackdrop>
+    <Grid x:Name="RootGrid" AllowDrop="True" Drop="RootGrid_Drop" DragOver="RootGrid_DragOver" >
         <StackPanel HorizontalAlignment="Stretch">
             <Grid  Height="44"  x:Name="TitleBar" HorizontalAlignment="Stretch" VerticalAlignment="Top">
                 <Grid.ColumnDefinitions>
@@ -20,10 +23,10 @@
                     <AppBarButton Icon="More" Margin="150,0,0,0" ToolTipService.ToolTip="More...">
                         <AppBarButton.Flyout>
                             <MenuFlyout >
-                                <MenuFlyoutItem x:Name="ConvertButton" Text="Convert ONNX to TensorRT" Click="ConvertButton_Click"/>
+                                <MenuFlyoutItem x:Name="ConvertButton" Text="Convert ONNX to TensorRT-RTX" Click="ConvertButton_Click"/>
                                 <MenuFlyoutItem x:Name="LicenseButton" Text="License" Click="LicenseButton_Click"/>
                                 <MenuFlyoutSeparator/>
-                                <MenuFlyoutItem Text="about" Click="AboutButton_Click"/>
+                                <MenuFlyoutItem Text="About WoLNamesBlackedOut" Click="AboutButton_Click"/>
                             </MenuFlyout>
                         </AppBarButton.Flyout>
                     </AppBarButton>
@@ -62,13 +65,13 @@
 
                     <StackPanel >
                         <StackPanel Orientation="Horizontal" Margin="12,4,4,4">
-                            <Button x:Name="PickAFileButton" Click="PickAFileButton_Click" Style="{StaticResource AccentButtonStyle}">
+                            <Button x:Name="PickAFileButton" Click="PickAFileButton_Click" Margin="12,4,4,4" Style="{StaticResource AccentButtonStyle}">
                                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
                                     <FontIcon Glyph="&#xE8E5;" />
                                     <TextBlock Text=" Open_File" VerticalAlignment="Center" Margin="4,0,0,0" />
                                 </StackPanel>
                             </Button>
-                            <TextBlock x:Name="PickAFileOutputTextBlock" TextWrapping="Wrap" MaxWidth="400"  Padding="8,0,0,0" VerticalAlignment="Center" Grid.Column="2"/>
+                            <TextBlock x:Name="PickAFileOutputTextBlock" TextWrapping="Wrap" MaxWidth="350"  Padding="8,0,0,0" VerticalAlignment="Center" Grid.Column="2"/>
                         </StackPanel>
                     </StackPanel>
 
@@ -124,7 +127,7 @@
                     <StackPanel Orientation="Horizontal" Margin="20,0,0,0">
                         
                         <CheckBox x:Name="Add_Copyright" Content="Add_Copyright" IsChecked="True" Margin="4,0,0,0" />
-                        <CheckBox x:Name="Use_TensorRT" Content="Use_TensorRT" Margin="12,0,0,0"/>
+                        <CheckBox x:Name="Use_TensorRT" Content="Use_TensorRT-RTX" Margin="12,0,0,0"/>
                     </StackPanel>
 
                     <Line Stroke="Gray" X1="10" Y1="0" X2="470" Y2="0" StrokeThickness="1" Margin="0,8,12,0"/>
@@ -133,7 +136,7 @@
                     <StackPanel >
                         <StackPanel  Orientation="Horizontal" Margin="12,4,4,4">
 
-                            <Slider x:Name="FrameSlideBar" Minimum="0" Maximum="100" Width="300" HorizontalAlignment="Left" Margin="4" ValueChanged="FrameSlideBar_ValueChanged"/>
+                            <Slider x:Name="FrameSlideBar" Minimum="0" Maximum="100" Width="300" HorizontalAlignment="Left" Margin="12,0,0,0" ValueChanged="FrameSlideBar_ValueChanged"/>
                             <StackPanel Orientation="Horizontal">
                                 <StackPanel VerticalAlignment="Center" HorizontalAlignment="Right" Margin="4">
                                     <TextBlock x:Name="FrameTextBlock_n" Text="0:00" HorizontalTextAlignment="Right" VerticalAlignment="Center"/>
@@ -147,7 +150,7 @@
                             </StackPanel>
                         </StackPanel>
                         <StackPanel Orientation="Horizontal" Margin="12,0,4,4">
-                            <Button x:Name="PreviewButton" Click="PreviewButton_Click" Style="{StaticResource AccentButtonStyle}">
+                            <Button x:Name="PreviewButton" Click="PreviewButton_Click" Style="{StaticResource AccentButtonStyle}" Margin="12,4,4,4">
                                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center" >
                                     <FontIcon Glyph="&#xF19D;" />
                                     <TextBlock Text=" Preview"  Margin="4,0,0,0" VerticalAlignment="Center" />
@@ -161,7 +164,7 @@
                     <Line Stroke="Gray" X1="10" Y1="0" X2="470" Y2="0" StrokeThickness="1" Margin="0,8,0,0"/>
 
                     <TextBlock  Text="Movie Rendering"  Style="{StaticResource SubheaderTextBlockStyle}" FontWeight="Bold" FontSize="16" Margin="20,12,4,4" VerticalAlignment="Center"></TextBlock>
-                    <StackPanel  Orientation="Vertical">
+                    <StackPanel  Orientation="Vertical"  Margin="12,4,4,4">
                         <StackPanel  Orientation="Horizontal"  Margin="12,4,4,4">
                             <StackPanel>
                                 <NumberBox x:Name="Start_min" Header="Start_min:" Value="0"   SpinButtonPlacementMode="Compact" SmallChange="1"    LargeChange="10"  Minimum="0"  Maximum="59"/>
@@ -210,8 +213,8 @@
                     <!-- progress Section -->
                     <Line Stroke="Gray" X1="10" Y1="0" X2="470" Y2="0" StrokeThickness="1" Margin="0,8,12,0"/>
                     <TextBlock  Text="Progress"  Style="{StaticResource SubheaderTextBlockStyle}" FontWeight="Bold" FontSize="16" Margin="20,12,4,4" VerticalAlignment="Center"></TextBlock>
-                    <ProgressBar x:Name="ProgressBar" Width="400" Value="0" IsIndeterminate="False" ShowPaused="False" ShowError="False" HorizontalAlignment="Left" Margin="12,4,4,4"/>
-                    <StackPanel Orientation="Vertical" Margin="12,4,4,4">
+                    <ProgressBar x:Name="ProgressBar" Width="400" Value="0" IsIndeterminate="False" ShowPaused="False" ShowError="False" HorizontalAlignment="Left" Margin="24,4,4,4"/>
+                    <StackPanel Orientation="Vertical" Margin="24,4,4,4">
                         <StackPanel Orientation="Horizontal" >
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock Text="Elapsed:" Margin="4" />
@@ -235,9 +238,14 @@
                         </StackPanel>
                     </StackPanel>
                     
-                    <!-- rakuten Section -->                    
+                    <!-- rakuten Section -->
                     <StackPanel>
-                        <WebView2 x:Name="MyWebView2" Source="https://blog.calocenrieti.com/rakuten_ad.htm" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" MinHeight="200" MinWidth="200"/>
+                        <!--<StackPanel Margin="4" Orientation="Horizontal" HorizontalAlignment="Center">
+                            <FontIcon Glyph="&#xF6B8;" />
+                            <HyperlinkButton Content="Donate to support WoLNamesBlackedOut" FontWeight="Bold" FontSize="16" NavigateUri="https://buymeacoffee.com/calocenrieti"  />
+                            <FontIcon Glyph="&#xF6B8;" />
+                        </StackPanel>
+                        -->
                         <InfoBar x:Name="InfoBar" Visibility="Collapsed" IsOpen="True" IsIconVisible="True" Severity="Success" IsClosable="True" Message="TensorRT Engine build success!" Margin="4"/>
                     </StackPanel>
                 </StackPanel>

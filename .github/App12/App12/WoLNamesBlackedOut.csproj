@@ -11,6 +11,11 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <None Remove="cublas64_12.dll" />
+    <None Remove="cublasLt64_12.dll" />
+    <None Remove="cudnn_cnn64_9.dll" />
+    <None Remove="cufft64_11.dll" />
+    <None Remove="cufftw64_11.dll" />
     <None Remove="ffmpeg-master-latest-win64-lgpl\bin\ffmpeg.exe" />
     <None Remove="ffmpeg-master-latest-win64-lgpl\bin\ffplay.exe" />
     <None Remove="ffmpeg-master-latest-win64-lgpl\bin\ffprobe.exe" />
@@ -48,14 +53,33 @@
     <None Remove="ffmpeg-master-latest-win64-lgpl\doc\nut.html" />
     <None Remove="ffmpeg-master-latest-win64-lgpl\doc\platform.html" />
     <None Remove="ffmpeg-master-latest-win64-lgpl\doc\style.min.css" />
+    <None Remove="ffmpeg-master-latest-win64-lgpl\FFmpeg-Builds-latest.zip" />
     <None Remove="ffmpeg-master-latest-win64-lgpl\FFmpeg-master.zip" />
     <None Remove="ffmpeg-master-latest-win64-lgpl\LICENSE.txt" />
     <None Remove="my_yolov8m_s.onnx" />
+    <None Remove="my_yolov8m_s.onnx_" />
     <None Remove="my_yolov8m_s_32.onnx" />
     <None Remove="my_yolov8m_s_dy.onnx" />
+    <None Remove="my_yolov8m_s_dy.onnx_" />
+    <None Remove="nppc64_12.dll" />
+    <None Remove="nppial64_12.dll" />
+    <None Remove="nppicc64_12.dll" />
+    <None Remove="nppidei64_12.dll" />
+    <None Remove="nppif64_12.dll" />
+    <None Remove="nppig64_12.dll" />
+    <None Remove="nppim64_12.dll" />
+    <None Remove="nppist64_12.dll" />
+    <None Remove="nppisu64_12.dll" />
+    <None Remove="nppitc64_12.dll" />
+    <None Remove="npps64_12.dll" />
+    <None Remove="nvblas64_12.dll" />
     <None Remove="nvinfer_10.dll" />
     <None Remove="nvinfer_builder_resource_10.dll" />
     <None Remove="nvonnxparser_10.dll" />
+    <None Remove="opencv_world4100.dll" />
+    <None Remove="opencv_world4130.dll" />
+    <None Remove="tensorrt_onnxparser_rtx_1_1.dll" />
+    <None Remove="tensorrt_rtx_1_1.dll" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="cudart64_12.dll">
@@ -175,7 +199,7 @@
     <Content Include="ffmpeg-master-latest-win64-lgpl\doc\style.min.css">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="ffmpeg-master-latest-win64-lgpl\FFmpeg-master.zip">
+    <Content Include="ffmpeg-master-latest-win64-lgpl\FFmpeg-Builds-latest.zip">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="ffmpeg-master-latest-win64-lgpl\LICENSE.txt">
@@ -188,22 +212,19 @@
     <Content Include="my_yolov8m_s_dy.onnx">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="nvinfer_10.dll">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <Content Include="nvinfer_builder_resource_10.dll">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <Content Include="nvonnxparser_10.dll">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
     <Content Include="onnxruntime.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="onnxruntime_providers_shared.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="opencv_world4100.dll">
+    <Content Include="opencv_world4130.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="tensorrt_onnxparser_rtx_1_1.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="tensorrt_rtx_1_1.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="WoLNamesBlackedOut.ico">
@@ -222,7 +243,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3351.48" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.4654" />
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.7.250606001" />
   </ItemGroup>
@@ -233,6 +253,10 @@
     </Content>
   </ItemGroup>
 
+  <PropertyGroup Label="Globals">
+    <WebView2EnableCsWinRTProjection>False</WebView2EnableCsWinRTProjection>
+  </PropertyGroup>
+
     <!-- Publish Properties -->
   <PropertyGroup>
     <PublishReadyToRun Condition="'$(Configuration)' == 'Debug'">False</PublishReadyToRun>
@@ -241,6 +265,7 @@
     <PublishTrimmed Condition="'$(Configuration)' != 'Debug'">True</PublishTrimmed>
     <AssemblyName>WoLNamesBlackedOut</AssemblyName>
     <ApplicationIcon>WoLNamesBlackedOut.ico</ApplicationIcon>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
   </PropertyGroup>
   <Target Name="PostBuild" AfterTargets="PostBuildEvent">
     <Exec Command="rem xcopy &quot;$(ProjectDir)dll\*.*&quot; &quot;C:\Users\jinta\source\repos\App12\App12\App12 (Package)\bin\x64\Release\AppX\App12&quot; /s /y" />
