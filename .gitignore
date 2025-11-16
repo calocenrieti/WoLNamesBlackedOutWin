@@ -500,3 +500,5 @@ FodyWeavers.xsd
 /.github/App12/App12/tensorrt_rtx_1_1.dll
 /.github/App12/App12/onnx_bk
 /.github/App12/App12/opencv-cuda
+/.github/App12/App12/tensorrt_onnxparser_rtx_1_2.dll
+/.github/App12/App12/tensorrt_rtx_1_2.dll
