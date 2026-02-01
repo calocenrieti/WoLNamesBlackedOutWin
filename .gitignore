@@ -506,3 +506,8 @@ FodyWeavers.xsd
 /.github/App12/App12/tensorrt_rtx_dll/tensorrt_rtx_1_2.dll
 /.github/App12/App12/tensorrt_onnxparser_rtx_1_3.dll
 /.github/App12/App12/tensorrt_rtx_1_3.dll
+/.github/App12/App12/opencv_world4130.dll_bk
+/.github/App12/App12/my_yolov8m_s_20251006.onnx
+/.github/App12/App12/my_yolov8m_s_dy_20251006.onnx
+/.github/App12/App12/my_yolov8m_s_dy_yolo11.onnx
+/.github/App12/App12/my_yolov8m_s_yolo11.onnx
