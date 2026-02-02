@@ -17,29 +17,38 @@
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <!-- タイトル -->
-                <TextBlock VerticalAlignment="Center" Text="WoLNamesBlackedOut"  Style="{StaticResource HeaderTextBlockStyle}" FontSize="24" FontWeight="Black" Margin="16,0,0,0"/>
-                <CommandBar Grid.Column="1" Background="Transparent" IsOpen="False" HorizontalAlignment="Left" DefaultLabelPosition="Right">
-                    <AppBarButton Icon="More" Margin="150,0,0,0" ToolTipService.ToolTip="More...">
-                        <AppBarButton.Flyout>
-                            <MenuFlyout >
-                                <MenuFlyoutItem x:Name="ConvertButton" Text="Convert ONNX to TensorRT-RTX" Click="ConvertButton_Click"/>
-                                <MenuFlyoutItem x:Name="LicenseButton" Text="License" Click="LicenseButton_Click"/>
-                                <MenuFlyoutSeparator/>
-                                <MenuFlyoutItem Text="About WoLNamesBlackedOut" Click="AboutButton_Click"/>
-                            </MenuFlyout>
-                        </AppBarButton.Flyout>
-                    </AppBarButton>
-                    <AppBarButton Icon="Save" Label="Save Image"  Margin="4,0,0,0"  x:Name="SaveImageButton" Click="SaveImageButton_Click" ToolTipService.ToolTip="Save Preview Image"/>
-                    <AppBarButton Click="ToggleThemeButton_Click" Margin="8,0,0,0" ToolTipService.ToolTip="Change Theme">
-                        <AppBarButton.Icon>
-                            <FontIcon Glyph="&#xE793;"/>
-                        </AppBarButton.Icon>
-                    </AppBarButton>
 
-                </CommandBar>
-                
-                <!-- CloseButtonを右端に -->
+                <!-- ドラッグ用領域だけを SetTitleBar に渡すための要素 -->
+                <Grid x:Name="DragRegion" Grid.ColumnSpan="2" Background="Transparent">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <!-- タイトル -->
+                    <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="WoLNamesBlackedOut"  Style="{StaticResource HeaderTextBlockStyle}" FontSize="24" FontWeight="Black" Margin="16,0,0,0"/>
+
+                    <CommandBar Grid.Column="1" Background="Transparent" IsOpen="False" HorizontalAlignment="Left" DefaultLabelPosition="Right">
+                        <AppBarButton Icon="More" Margin="150,0,0,0" ToolTipService.ToolTip="More...">
+                            <AppBarButton.Flyout>
+                                <MenuFlyout >
+                                    <MenuFlyoutItem x:Name="ConvertButton" Text="Convert ONNX to TensorRT-RTX" Click="ConvertButton_Click"/>
+                                    <MenuFlyoutItem x:Name="LicenseButton" Text="License" Click="LicenseButton_Click"/>
+                                    <MenuFlyoutSeparator/>
+                                    <MenuFlyoutItem Text="About WoLNamesBlackedOut" Click="AboutButton_Click"/>
+                                </MenuFlyout>
+                            </AppBarButton.Flyout>
+                        </AppBarButton>
+                        <AppBarButton Icon="Save" Label="Save Image"  Margin="4,0,0,0"  x:Name="SaveImageButton" Click="SaveImageButton_Click" ToolTipService.ToolTip="Save Preview Image"/>
+                        <AppBarButton Click="ToggleThemeButton_Click" Margin="8,0,0,0" ToolTipService.ToolTip="Change Theme">
+                            <AppBarButton.Icon>
+                                <FontIcon Glyph="&#xE793;"/>
+                            </AppBarButton.Icon>
+                        </AppBarButton>
+                    </CommandBar>
+                </Grid>
+
+                <!-- CloseButton等はドラッグ領域ではない列に置く（ここは TitleBar の Column=2）-->
                 <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top">
                     <Button  x:Name="MinimizeButton" Click="MinimizeButton_Click"  Margin="0,0,0,0" VerticalAlignment="Top" Background="Transparent" BorderBrush="Transparent">
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Top">
@@ -61,7 +70,7 @@
             <StackPanel HorizontalAlignment="Left" Orientation="Horizontal">
                 <StackPanel >
                     <!-- Select File Section -->
-                    <TextBlock  Text="Select File or Drag and Drop File" Style="{StaticResource SubheaderTextBlockStyle}" FontWeight="Bold" FontSize="16" Margin="20,4,4,4" VerticalAlignment="Center"></TextBlock>
+                    <TextBlock  Text="Select File or Drag and Drop File" Style="{StaticResource SubheaderTextBlockStyle}" Drop="RootGrid_Drop" FontWeight="Bold" FontSize="16" Margin="20,4,4,4" VerticalAlignment="Center"></TextBlock>
 
                     <StackPanel >
                         <StackPanel Orientation="Horizontal" Margin="12,4,4,4">
@@ -71,7 +80,7 @@
                                     <TextBlock Text=" Open_File" VerticalAlignment="Center" Margin="4,0,0,0" />
                                 </StackPanel>
                             </Button>
-                            <TextBlock x:Name="PickAFileOutputTextBlock" TextWrapping="Wrap" MaxWidth="350"  Padding="8,0,0,0" VerticalAlignment="Center" Grid.Column="2"/>
+                            <TextBlock x:Name="PickAFileOutputTextBlock" TextWrapping="Wrap" MaxWidth="350" Drop="RootGrid_Drop"  Padding="8,0,0,0" VerticalAlignment="Center" Grid.Column="2"/>
                         </StackPanel>
                     </StackPanel>
 
@@ -167,28 +176,28 @@
                     <StackPanel  Orientation="Vertical"  Margin="12,4,4,4">
                         <StackPanel  Orientation="Horizontal"  Margin="12,4,4,4">
                             <StackPanel>
-                                <NumberBox x:Name="Start_min" Header="Start_min:" Value="0"   SpinButtonPlacementMode="Compact" SmallChange="1"    LargeChange="10"  Minimum="0"  Maximum="59"/>
+                                <NumberBox x:Name="Start_min" Header="Start_min:" ValueChanged="Start_End_min_sec_ValueChanged" Value="0"   SpinButtonPlacementMode="Compact" SmallChange="1"  LargeChange="10"  Minimum="0"  Maximum="59"/>
                             </StackPanel>
                             <StackPanel Margin="4" Orientation="Vertical" VerticalAlignment="Bottom">
                                 <TextBlock Text=":" HorizontalTextAlignment="Center"/>
                             </StackPanel>
                             <StackPanel>
-                                <NumberBox x:Name="Start_sec" Header="Start_sec:" Value="0"  SpinButtonPlacementMode="Compact" SmallChange="1"    LargeChange="10"  Minimum="0"  Maximum="59"/>
+                                <NumberBox x:Name="Start_sec" Header="Start_sec:" ValueChanged="Start_End_min_sec_ValueChanged"  Value="0"  SpinButtonPlacementMode="Compact" SmallChange="1" LargeChange="10"  Minimum="0"  Maximum="59"/>
                             </StackPanel>
                             <StackPanel Margin="4" Orientation="Vertical"  VerticalAlignment="Bottom">
                                 <FontIcon Glyph="&#xF141;" />
                             </StackPanel>
                             <StackPanel>
-                                <NumberBox x:Name="End_min" Header="End_min:" Value="0"  SpinButtonPlacementMode="Compact" SmallChange="1"    LargeChange="10"  Minimum="0"  Maximum="59"/>
+                                <NumberBox x:Name="End_min" Header="End_min:" ValueChanged="Start_End_min_sec_ValueChanged" Value="0"  SpinButtonPlacementMode="Compact" SmallChange="1" LargeChange="10"  Minimum="0"  Maximum="59"/>
                             </StackPanel>
                             <StackPanel Margin="4" Orientation="Vertical"  VerticalAlignment="Bottom">
                                 <TextBlock Text=":" HorizontalTextAlignment="Center"/>
                             </StackPanel>
                             <StackPanel>
-                                <NumberBox x:Name="End_sec" Header="End_sec:" Value="0"  SpinButtonPlacementMode="Compact" SmallChange="1"    LargeChange="10"   Minimum="0"  Maximum="59"/>
+                                <NumberBox x:Name="End_sec" Header="End_sec:" ValueChanged="Start_End_min_sec_ValueChanged" Value="0"  SpinButtonPlacementMode="Compact" SmallChange="1" LargeChange="10"   Minimum="0"  Maximum="59"/>
                             </StackPanel>
                             <StackPanel Margin="4" Orientation="Vertical"  VerticalAlignment="Top">
-                                <Slider x:Name="BitrateSlideBar" Header="Bitrate(Mbps)" Value="11" Minimum="1" Maximum="20" Width="130" HorizontalAlignment="Left" Margin="8,0,0,0" />
+                                <Slider x:Name="BitrateSlideBar" Header="Bitrate(Mbps)" Value="11" Minimum="1" Maximum="20" Width="110" HorizontalAlignment="Left" Margin="8,0,0,0" />
                             </StackPanel>
                         </StackPanel>
                         <StackPanel  Orientation="Horizontal"  Margin="12,4,4,4" >
@@ -207,6 +216,9 @@
                                         <TextBlock Text=" STOP"  Margin="4,0,0,0" VerticalAlignment="Center" />
                                     </StackPanel>
                                 </Button>
+                            </StackPanel>
+                            <StackPanel Margin="8,4,0,0">
+                                <CheckBox x:Name="ForX" Content="ForX(Twitter)" ToolTipService.ToolTip ="Limit 720p 30FPS"  IsChecked="False" IsEnabled="False" Margin="4,0,0,0" />
                             </StackPanel>
                         </StackPanel>
                     </StackPanel>

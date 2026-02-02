@@ -66,6 +66,7 @@ namespace WoLNamesBlackedOut
         private bool running_state = false; // 実行中かどうかを示すフラグ
         private bool cancel_state = false; // キャンセルかどうかを示すフラグ
         private bool v_hasAudio = true; // 音声があるかどうかを示すフラグ
+        private bool useblackedout = true;
 
 
         private Microsoft.UI.Xaml.DispatcherTimer timer;
@@ -106,7 +107,8 @@ namespace WoLNamesBlackedOut
         {
             this.InitializeComponent();
             ExtendsContentIntoTitleBar = true;
-            this.SetTitleBar(TitleBar);
+            this.SetTitleBar(DragRegion);
+
             // Set the preferred height option for the title bar
             this.AppWindow.TitleBar.PreferredHeightOption = TitleBarHeightOption.Collapsed;
 
@@ -116,7 +118,7 @@ namespace WoLNamesBlackedOut
                 double dpiScale = WindowHelper.GetWindowDpiScale(this);
 
                 // 論理サイズをDPIスケールで変換
-                int logicalWidth = 1900;
+                int logicalWidth = 850;
                 int logicalHeight = 800;
                 int physicalWidth = (int)(logicalWidth * dpiScale);
                 int physicalHeight = (int)(logicalHeight * dpiScale);
@@ -221,6 +223,7 @@ namespace WoLNamesBlackedOut
                 codec = "hevc_nvenc";
                 hwaccel = "cuda";
                 preset = "slow"; // NVIDIAのプリセットを設定
+                useblackedout = true;
 
                 if ((GetCUDAComputeCapability() > 75) || (GetCUDAComputeCapability() == 75 && GetRTXisEnable() == true))    //tensorRTが使える
                 {
@@ -228,7 +231,7 @@ namespace WoLNamesBlackedOut
                     ConvertButton.IsEnabled = true;
 
                     // アプリケーション専用のフォルダパスを取得
-                    string filepath = System.IO.Path.Combine(appFolder, "my_yolov8m_s_20251004.engine");
+                    string filepath = System.IO.Path.Combine(appFolder, "my_yolov8m_s_20260201.engine");
                     if (!File.Exists(filepath))
                     {
                         // appFolder 内の "my_yolov8m*.engine" にマッチするファイル一覧を取得する
@@ -260,6 +263,7 @@ namespace WoLNamesBlackedOut
                 Use_TensorRT.IsEnabled = false;
                 Use_TensorRT.IsChecked = false;
                 ConvertButton.IsEnabled = false;
+                useblackedout = true;
             }
             else if (gpuvendor == 'I')　//Intelの場合
             {
@@ -270,18 +274,19 @@ namespace WoLNamesBlackedOut
                 Use_TensorRT.IsEnabled = false;
                 Use_TensorRT.IsChecked = false;
                 ConvertButton.IsEnabled = false;
+                useblackedout = true;
             }
             else //その他のベンダーの場合(gpuvendor == 'X')
             {
                 UIControl_enable_false();
-                InfoBar.Message = "Sorry, we could not find any available hardware encoders. The app cannot run.";
+                InfoBar.Message = "Sorry, we could not find any available hardware video encoders. The app cannot edit the video.";
                 InfoBar.Severity = InfoBarSeverity.Error;
                 InfoBar.IsOpen = true;
-
+                useblackedout = false;
                 InfoBar.Visibility = Visibility.Visible;
             }
 
-            if (gpuvendor != 'X')
+            //if (gpuvendor != 'X')
             {
                 PickAFileButton.IsEnabled = true;
             }
@@ -481,6 +486,23 @@ namespace WoLNamesBlackedOut
                     {
                         var originalHeight = bitmapImage.PixelHeight;
                         scaleFactor = image_preview.Height / originalHeight;
+                        // DPIスケールを取得
+                        double dpiScale = WindowHelper.GetWindowDpiScale(this);
+
+                        // 論理サイズをDPIスケールで変換
+                        int logicalWidth = 800 + (int)(bitmapImage.PixelWidth * scaleFactor) - 280;
+                        int logicalHeight = 800;
+                        int physicalWidth = (int)(logicalWidth * dpiScale);
+                        int physicalHeight = (int)(logicalHeight * dpiScale);
+
+                        var initialSize = new Windows.Graphics.SizeInt32
+                        {
+                            Width = physicalWidth,
+                            Height = physicalHeight
+                        };
+                        this.AppWindow.Resize(initialSize);
+
+
                         image_preview.Source = bitmapImage;
                         ProgressBar.IsIndeterminate = false;
                         UIControl_enable_true();
@@ -863,6 +885,7 @@ namespace WoLNamesBlackedOut
             BlackedOutSlideBar.IsEnabled = false;
             FixedFrameSlideBar.IsEnabled = false;
             BitrateSlideBar.IsEnabled = false;
+            ForX.IsEnabled = false;
 
         }
         private void UIControl_enable_true()
@@ -896,11 +919,19 @@ namespace WoLNamesBlackedOut
             End_min.IsEnabled = true;
             End_sec.IsEnabled = true;
             Add_Copyright.IsEnabled = true;
-            BlackedOut_ComboBox.IsEnabled = true;
-            FixedFrame_ComboBox.IsEnabled = true;
-            BlackedOutSlideBar.IsEnabled = true;
-            FixedFrameSlideBar.IsEnabled = true;
-            BitrateSlideBar.IsEnabled = true;
+            if (useblackedout == true)
+            {
+                BlackedOut_ComboBox.IsEnabled = true;
+                FixedFrame_ComboBox.IsEnabled = true;
+                BlackedOutSlideBar.IsEnabled = true;
+                FixedFrameSlideBar.IsEnabled = true;
+                BitrateSlideBar.IsEnabled = true;
+            }
+            //BlackedOut_ComboBox.IsEnabled = true;
+            //FixedFrame_ComboBox.IsEnabled = true;
+            //BlackedOutSlideBar.IsEnabled = true;
+            //FixedFrameSlideBar.IsEnabled = true;
+            //BitrateSlideBar.IsEnabled = true;
             if (trt_mode == false)
             {
                 Use_TensorRT.IsEnabled = false;
@@ -912,6 +943,7 @@ namespace WoLNamesBlackedOut
                 Use_TensorRT.IsEnabled = true;
                 ConvertButton.IsEnabled = true;
             }
+            Start_End_min_sec_ValueChanged(null,null);
         }
 
         // スライダーの値が変更されたときに呼ばれるイベントハンドラ
@@ -956,7 +988,7 @@ namespace WoLNamesBlackedOut
                         new HyperlinkButton { Content = "Support Site", NavigateUri = new Uri("https://blog.calocenrieti.com/blog/wol_names_blacked_out_win/"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center},
                         new HyperlinkButton { Content = "Discord", NavigateUri = new Uri("https://discord.gg/q2Hqr4tD8v"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center},
                         new HyperlinkButton { Content = "GitHub", NavigateUri = new Uri("https://github.com/calocenrieti/WoLNamesBlackedOutWin"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 12) ,HorizontalAlignment = HorizontalAlignment.Center},
-                        new HyperlinkButton { Content = "Donate(buymeacoffee.com)", NavigateUri = new Uri("https://buymeacoffee.com/calocenrieti"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 12) ,HorizontalAlignment = HorizontalAlignment.Center},
+                        new HyperlinkButton { Content = "Donate", NavigateUri = new Uri("https://buymeacoffee.com/calocenrieti"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 12) ,HorizontalAlignment = HorizontalAlignment.Center},
                         new TextBlock { Text = "This software contains source code provided by NVIDIA Corporation.", FontSize=12,Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 8) ,HorizontalAlignment = HorizontalAlignment.Center ,TextWrapping=TextWrapping.Wrap},
                         new TextBlock { Text = "This software uses FFmpeg.exe licensed under the LGPLv2.1 \nand its source can be downloaded https://github.com/FFmpeg/FFmpeg.git", FontSize=12,Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 8) ,HorizontalAlignment = HorizontalAlignment.Center,TextWrapping=TextWrapping.Wrap}
                     }
@@ -980,15 +1012,27 @@ namespace WoLNamesBlackedOut
                             new HyperlinkButton { Content = "Microsoft.AI.DirectML 1.15.4", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.AI.DirectML/1.15.4/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "Microsoft.ML.OnnxRuntime 1.23.2", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.ML.OnnxRuntime/1.23.2/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "Microsoft.ML.OnnxRuntime.DirectML 1.23.0", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.ML.OnnxRuntime.DirectML/1.23.0/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.NET.ILLink.Tasks 8.0.23", NavigateUri = new Uri("https://licenses.nuget.org/MIT"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "Microsoft.Windows.CppWinRT 2.0.250303.1", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.Windows.CppWinRT/2.0.250303.1/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "Microsoft.NET.ILLink.Tasks 8.0.14", NavigateUri = new Uri("https://licenses.nuget.org/MIT"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "Microsoft.Windows.SDK.BuildTools 10.0.26100.4654", NavigateUri = new Uri("https://aka.ms/WinSDKLicenseURL"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK 1.7.250606001", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK/1.7.250606001/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.Windows.SDK.BuildTools 10.0.26100.7463", NavigateUri = new Uri("https://aka.ms/WinSDKLicenseURL"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK 1.8.260101001", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK/1.8.260101001/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.Windows.SDK.BuildTools.MSI 1.7.20250829.1", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.Windows.SDK.BuildTools.MSIX/1.7.20250829.1/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.AI 1.8.44", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.AI/1.8.44/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.Base 1.8.251216001", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.Base/1.8.251216001/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.DWrite 1.8.25122902", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.DWrite/1.8.25122902/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.Foundation 1.8.251220000", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.Foundation/1.8.251220000/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.InteractiveExperien 1.8.251217001", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.InteractiveExperiences/1.8.251217001/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.ML 1.8.2119", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.ML/1.8.2119/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.Runtime 1.8.260101001", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.Runtime/1.8.260101001/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.Widgets 1.8.251231004", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.Widgets/1.8.251231004/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.WinUI 1.8.251222000", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.WinUI/1.8.251222000/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.Web.WebView2 1.0.3179.45", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.Web.WebView2/1.0.3179.45/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "System.Numerics.Tensors 9.0.0", NavigateUri = new Uri("https://licenses.nuget.org/MIT"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "NVIDIA CUDA Toolkit 12.9", NavigateUri = new Uri("https://docs.nvidia.com/cuda/eula/index.html"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "NVIDIA TensorRT-RTX 1.1", NavigateUri = new Uri("https://docs.nvidia.com/deeplearning/tensorrt-rtx/latest/_static/eula-12Aug2025.pdf"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "OpenCV 4.13dev", NavigateUri = new Uri("https://github.com/opencv/opencv/blob/master/LICENSE"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "NVIDIA TensorRT-RTX 1.3", NavigateUri = new Uri("https://docs.nvidia.com/deeplearning/tensorrt-rtx/latest/_static/eula-12Aug2025.pdf"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "OpenCV 4.13", NavigateUri = new Uri("https://github.com/opencv/opencv/blob/master/LICENSE"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "FFmpeg 8.0 (exe)", NavigateUri = new Uri("https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "Ultralytics 8.3.184 (model)", NavigateUri = new Uri("https://www.ultralytics.com/legal/agpl-3-0-software-license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Ultralytics 8.4.7 (model)", NavigateUri = new Uri("https://www.ultralytics.com/legal/agpl-3-0-software-license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                         }
                     }
                 },
@@ -1015,7 +1059,7 @@ namespace WoLNamesBlackedOut
             if (PickAFileOutputTextBlock_text.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase)) //動画の時
             {
                 // 動画ファイルのパスを指定
-                var videoFilePath = v_file_path; 
+                var videoFilePath = v_file_path;
 
                 // 現在のスライダーの値を取得
                 int currentFrame = (int)FrameSlideBar.Value;
@@ -1071,6 +1115,23 @@ namespace WoLNamesBlackedOut
                 scaleFactor = image_preview.Height / originalHeight;
                 // 縮小率を表示
                 Debug.WriteLine($"縮小率: {scaleFactor}");
+
+                // DPIスケールを取得
+                double dpiScale = WindowHelper.GetWindowDpiScale(this);
+
+                // 論理サイズをDPIスケールで変換
+                int logicalWidth = 800 + (int)(bitmapImage.PixelWidth * scaleFactor)-280;
+                int logicalHeight = 800;
+                int physicalWidth = (int)(logicalWidth * dpiScale);
+                int physicalHeight = (int)(logicalHeight * dpiScale);
+
+                var initialSize = new Windows.Graphics.SizeInt32
+                {
+                    Width = physicalWidth,
+                    Height = physicalHeight
+                };
+                this.AppWindow.Resize(initialSize);
+
 
                 image_preview.Source = bitmapImage;
                 ProgressBar.IsIndeterminate = false;
@@ -1286,7 +1347,7 @@ namespace WoLNamesBlackedOut
                     StorageFolder localFolder = ApplicationData.Current.LocalFolder;
                     string localAppDataPath = localFolder.Path;
                     string appFolder = System.IO.Path.Combine(localAppDataPath, "WoLNamesBlackedOut");
-                    string cashefilepath = System.IO.Path.Combine(appFolder, "my_yolov8m_s_20251004.cashe");
+                    string cashefilepath = System.IO.Path.Combine(appFolder, "my_yolov8m_s_20260201.cashe");
                     if (!File.Exists(cashefilepath))
                     {
                         InfoBar.Message = "JIT compile has started; processing will begin 10 seconds later.";
@@ -1383,7 +1444,7 @@ namespace WoLNamesBlackedOut
                 int start_time = (int)(Start_min.Value * 60) + (int)(Start_sec.Value);
                 int end_time = (int)(End_min.Value * 60) + (int)(End_sec.Value);
                 int duration = end_time - start_time;
-                arguments = $" -i \"{v_file_path}\" -ss \"{start_time}\" -t \"{duration}\" -acodec copy \"{audioFile1}\"";
+                arguments = $" -i \"{v_file_path}\" -ss \"{start_time}\" -t \"{duration}\" -c:a aac \"{audioFile1}\"";
             }
 
             var processStartInfo = new ProcessStartInfo
@@ -1430,13 +1491,28 @@ namespace WoLNamesBlackedOut
             //音声を映像と合成
 
             arguments = "";
-            if (Trim_skip == true)
+
+            if (ForX.IsChecked == true)
             {
-                arguments = $" -i \"{audioFile1}\" -i \"{videoFile2}\" -c:v copy -c:a copy \"{outvideo}\"";
+                if (hwaccel == "cuda")
+                {
+                    arguments = $" -hwaccel cuda -hwaccel_output_format cuda -i \"{videoFile2}\" -i \"{audioFile1}\" -vf \"scale_cuda=1280:-2,pad_cuda=w=1280:h='max(ih,426)':x=0:y=(oh-ih)/2\" -c:v h264_nvenc -b:v \"{v_bitrate}\" -r 30 -c:a aac -b:a 192k -map 0:v:0 -map 1:a:0 -preset \"{preset}\" -shortest \"{outvideo}\"";
+                }
+                else 
+                {
+                    arguments = $" -hwaccel \"{hwaccel}\" -i \"{videoFile2}\" -i \"{audioFile1}\" -vf \"scale=1280:-2,pad=w=1280:h='max(ih,426)':x=0:y=(oh-ih)/2\" -c:v h264_qsv -b:v \"{v_bitrate}\" -r 30 -c:a aac -b:a 192k -map 0:v:0 -map 1:a:0 -preset \"{preset}\" -shortest \"{outvideo}\"";
+                }
             }
             else
             {
-                arguments = $"-hwaccel \"{hwaccel}\" -i \"{audioFile1}\" -i \"{videoFile2}\" -vcodec \"{codec}\" -b:v \"{v_bitrate}\" -preset \"{preset}\" \"{outvideo}\"";
+                if (Trim_skip == true)
+                {
+                    arguments = $" -i \"{audioFile1}\" -i \"{videoFile2}\" -c:v copy -c:a copy  -shortest \"{outvideo}\"";
+                }
+                else
+                {
+                    arguments = $"-hwaccel \"{hwaccel}\" -i \"{videoFile2}\" -i \"{audioFile1}\"  -vcodec \"{codec}\" -b:v \"{v_bitrate}\" -c:a aac -b:a 192k -map 0:v:0 -map 1:a:0 -preset \"{preset}\" -shortest  \"{outvideo}\"";
+                }
             }
 
             processStartInfo = new ProcessStartInfo
@@ -1853,6 +1929,31 @@ namespace WoLNamesBlackedOut
                 RedrawRectanglesWithNewColor();
             }
         }
-    }
 
+        private void Start_End_min_sec_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
+        {
+            if (Start_min == null || Start_sec == null || End_min == null || End_sec == null || ForX == null)
+            {
+                return;
+            }
+            if (End_min.Value * 60 + End_sec.Value > Start_min.Value * 60 + Start_sec.Value)
+            { 
+                BlackedOutStartButton.IsEnabled = true;
+            }
+            else
+            {
+                BlackedOutStartButton.IsEnabled = false;
+            }
+            if (End_min.Value * 60 + End_sec.Value - Start_min.Value * 60 + Start_sec.Value <= 140 && End_min.Value * 60 + End_sec.Value > Start_min.Value * 60 + Start_sec.Value)
+            {
+                ForX.IsEnabled = true;
+            }
+            else
+            {
+                ForX.IsEnabled = false;
+                ForX.IsChecked = false;
+            }
+
+        }
+    }
 }

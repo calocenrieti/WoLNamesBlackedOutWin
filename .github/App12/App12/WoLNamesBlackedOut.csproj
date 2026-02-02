@@ -78,8 +78,10 @@
     <None Remove="nvonnxparser_10.dll" />
     <None Remove="opencv_world4100.dll" />
     <None Remove="opencv_world4130.dll" />
-    <None Remove="tensorrt_onnxparser_rtx_1_1.dll" />
-    <None Remove="tensorrt_rtx_1_1.dll" />
+    <None Remove="tensorrt_onnxparser_rtx_1_2.dll" />
+    <None Remove="tensorrt_onnxparser_rtx_1_3.dll" />
+    <None Remove="tensorrt_rtx_1_2.dll" />
+    <None Remove="tensorrt_rtx_1_3.dll" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="cudart64_12.dll">
@@ -221,10 +223,10 @@
     <Content Include="opencv_world4130.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="tensorrt_onnxparser_rtx_1_1.dll">
+    <Content Include="tensorrt_onnxparser_rtx_1_3.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="tensorrt_rtx_1_1.dll">
+    <Content Include="tensorrt_rtx_1_3.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="WoLNamesBlackedOut.ico">
@@ -243,8 +245,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.4654" />
-    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.7.250606001" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.7463" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260101001" />
   </ItemGroup>
 
   <ItemGroup>
