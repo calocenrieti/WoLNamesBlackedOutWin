@@ -11,11 +11,27 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Remove="opencv-cuda\**" />
+    <Compile Remove="tensorrt_dll\**" />
+    <Content Remove="opencv-cuda\**" />
+    <Content Remove="tensorrt_dll\**" />
+    <EmbeddedResource Remove="opencv-cuda\**" />
+    <EmbeddedResource Remove="tensorrt_dll\**" />
+    <None Remove="opencv-cuda\**" />
+    <None Remove="tensorrt_dll\**" />
+    <Page Remove="opencv-cuda\**" />
+    <Page Remove="tensorrt_dll\**" />
+    <PRIResource Remove="opencv-cuda\**" />
+    <PRIResource Remove="tensorrt_dll\**" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Remove="best_slim_fp16.onnx" />
     <None Remove="cublas64_12.dll" />
     <None Remove="cublasLt64_12.dll" />
     <None Remove="cudnn_cnn64_9.dll" />
     <None Remove="cufft64_11.dll" />
     <None Remove="cufftw64_11.dll" />
+    <None Remove="deepfillv2_mod_simp_fp16.onnx" />
     <None Remove="ffmpeg-master-latest-win64-lgpl\bin\ffmpeg.exe" />
     <None Remove="ffmpeg-master-latest-win64-lgpl\bin\ffplay.exe" />
     <None Remove="ffmpeg-master-latest-win64-lgpl\bin\ffprobe.exe" />
@@ -78,6 +94,7 @@
     <None Remove="nvonnxparser_10.dll" />
     <None Remove="opencv_world4100.dll" />
     <None Remove="opencv_world4130.dll" />
+    <None Remove="opencv_world4130.dll_bk" />
     <None Remove="tensorrt_onnxparser_rtx_1_2.dll" />
     <None Remove="tensorrt_onnxparser_rtx_1_3.dll" />
     <None Remove="tensorrt_rtx_1_2.dll" />
@@ -207,7 +224,9 @@
     <Content Include="ffmpeg-master-latest-win64-lgpl\LICENSE.txt">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="Microsoft.WindowsAppRuntime.Bootstrap.dll" />
+    <Content Include="Microsoft.WindowsAppRuntime.Bootstrap.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
     <Content Include="my_yolov8m_s.onnx">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
@@ -245,8 +264,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.7463" />
-    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260101001" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.7705" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260209005" />
   </ItemGroup>
 
   <ItemGroup>
