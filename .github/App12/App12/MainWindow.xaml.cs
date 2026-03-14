@@ -1010,7 +1010,7 @@ namespace WoLNamesBlackedOut
                         Children =
                         {
                             new HyperlinkButton { Content = "Microsoft.AI.DirectML 1.15.4", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.AI.DirectML/1.15.4/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "Microsoft.ML.OnnxRuntime.DirectML 1.24.2", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.ML.OnnxRuntime.DirectML/1.24.2/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.ML.OnnxRuntime.DirectML 1.24.3", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.ML.OnnxRuntime.DirectML/1.24.3/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "Microsoft.Windows.CppWinRT 2.0.250303.1", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.Windows.CppWinRT/2.0.250303.1/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "Microsoft.NET.ILLink.Tasks 8.0.24", NavigateUri = new Uri("https://licenses.nuget.org/MIT"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "Microsoft.Windows.SDK.BuildTools 10.0.26100.7705", NavigateUri = new Uri("https://aka.ms/WinSDKLicenseURL"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
@@ -1490,27 +1490,34 @@ namespace WoLNamesBlackedOut
             //音声を映像と合成
 
             arguments = "";
+            bool useForX = false;
 
             if (ForX.IsChecked == true)
             {
-                if (hwaccel == "cuda")
+                useForX = true;
+                if (hwaccel == "cuda") //nvidia_nvenc
                 {
-                    arguments = $" -hwaccel cuda -hwaccel_output_format cuda -i \"{videoFile2}\" -i \"{audioFile1}\" -vf \"scale_cuda=1280:-2,pad_cuda=w=1280:h='max(ih,426)':x=0:y=(oh-ih)/2\" -c:v h264_nvenc -b:v \"{v_bitrate}\" -r 30 -c:a aac -b:a 192k -map 0:v:0 -map 1:a:0 -preset \"{preset}\" -shortest \"{outvideo}\"";
+                    arguments = $" -hwaccel cuda -hwaccel_output_format cuda -i \"{videoFile2}\" -i \"{audioFile1}\" -vf \"scale_cuda=1280:-2,pad_cuda=w=1280:h='max(ih,426)':x=0:y=(oh-ih)/2\" -vf \"setpts=PTS-STARTPTS\" -af \"asetpts=PTS-STARTPTS\" -c:v h264_nvenc -b:v \"{v_bitrate}\" -r 30 -c:a aac -b:a 192k -map 0:v:0 -map 1:a:0 -preset \"{preset}\" -shortest -movflags +faststart \"{outvideo}\"";
                 }
-                else 
+                else if(hwaccel == "d3d11va") //radeon_amf
                 {
-                    arguments = $" -hwaccel \"{hwaccel}\" -i \"{videoFile2}\" -i \"{audioFile1}\" -vf \"scale=1280:-2,pad=w=1280:h='max(ih,426)':x=0:y=(oh-ih)/2\" -c:v h264_qsv -b:v \"{v_bitrate}\" -r 30 -c:a aac -b:a 192k -map 0:v:0 -map 1:a:0 -preset \"{preset}\" -shortest \"{outvideo}\"";
+                    arguments = $" -hwaccel \"{hwaccel}\" -i \"{videoFile2}\" -i \"{audioFile1}\" -vf \"scale=1280:-2,pad=w=1280:h='max(ih,426)':x=0:y=(oh-ih)/2 \" -vf \"setpts=PTS-STARTPTS\" -af \"asetpts=PTS-STARTPTS\" -c:v h264_amf -b:v \"{v_bitrate}\" -r 30 -c:a aac -b:a 192k -map 0:v:0 -map 1:a:0 -preset \"{preset}\" -shortest -movflags +faststart \"{outvideo}\"";
+                }
+                else //intel_qsv
+                {
+                    arguments = $"-hwaccel \"{hwaccel}\" -i \"{videoFile2}\" -i \"{audioFile1}\" -vf \"scale=1280:-2,pad=w=1280:h='max(ih,426)':x=0:y=(oh-ih)/2\" -vf \"setpts=PTS-STARTPTS\" -af \"asetpts=PTS-STARTPTS\"-c:v h264_qsv -b:v \"{v_bitrate}\" -r 30 -c:a aac -b:a 192k -map 0:v:0 -map 1:a:0 -preset \"{preset}\" -shortest -movflags +faststart \"{outvideo}\"";
                 }
             }
             else
             {
+                useForX = false;
                 if (Trim_skip == true)
                 {
-                    arguments = $" -i \"{audioFile1}\" -i \"{videoFile2}\" -c:v copy -c:a copy  -shortest \"{outvideo}\"";
+                    arguments = $" -i \"{audioFile1}\" -i \"{videoFile2}\" -c:v copy -c:a copy  -shortest -movflags +faststart \"{outvideo}\"";
                 }
                 else
                 {
-                    arguments = $"-hwaccel \"{hwaccel}\" -i \"{videoFile2}\" -i \"{audioFile1}\"  -vcodec \"{codec}\" -b:v \"{v_bitrate}\" -c:a aac -b:a 192k -map 0:v:0 -map 1:a:0 -preset \"{preset}\" -shortest  \"{outvideo}\"";
+                    arguments = $"-hwaccel \"{hwaccel}\" -i \"{videoFile2}\" -i \"{audioFile1}\" -vf \"setpts=PTS-STARTPTS\" -af \"asetpts=PTS-STARTPTS\" -vcodec \"{codec}\" -b:v \"{v_bitrate}\" -r \"{v_fps}\" -c:a aac -b:a 192k -map 0:v:0 -map 1:a:0 -preset \"{preset}\" -shortest -movflags +faststart \"{outvideo}\"";
                 }
             }
 
@@ -1530,8 +1537,8 @@ namespace WoLNamesBlackedOut
             output = new StringBuilder();
             error = new StringBuilder();
 
-            process.OutputDataReceived += (sender, e) => AppendOutput(e.Data);
-            process.ErrorDataReceived += (sender, e) => AppendOutput(e.Data);
+            process.OutputDataReceived += (sender, e) => AppendOutput(e.Data, useForX);
+            process.ErrorDataReceived += (sender, e) => AppendOutput(e.Data, useForX);
 
             process.Start();
             process.BeginOutputReadLine();
@@ -1547,8 +1554,17 @@ namespace WoLNamesBlackedOut
             FFMpeg_text.Text = "";
 
         }
-        private void AppendOutput(string data)
+        private void AppendOutput(string data, bool useForX)
         {
+            double vfps_cal;
+            if (useForX == true)
+            {
+                vfps_cal = 30;
+            }
+            else
+            {
+                vfps_cal = v_fps;
+            }
             if (!string.IsNullOrEmpty(data))
             {
                 // ffmpeg の出力例を想定: "frame= 123 fps= 37 q=-1.0 Lsize=  12345kB time=00:00:05.12 bitrate=19769.5kbits/s speed=1.23x"
@@ -1571,7 +1587,8 @@ namespace WoLNamesBlackedOut
                             DispatcherQueue.TryEnqueue(() =>
                             {
                                 //double fps = fps_ffmpeg ;
-                                double percentage = ((double)frame_ffmpeg / (v_fps * (v_end_time - v_start_time)));
+                                //double percentage = ((double)frame_ffmpeg / (v_fps * (v_end_time - v_start_time)));
+                                double percentage = ((double)frame_ffmpeg / (vfps_cal * (v_end_time - v_start_time)));
                                 double eta = (totalSeconds * (1 - percentage) / percentage + 0.5);
                                 Elapsed.Text = totalSeconds.ToString("F1");
                                 FPS.Text = fps_ffmpeg.ToString("F2");
