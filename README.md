@@ -5,6 +5,9 @@ ONNX推論にはWindowsMLを利用しています<br>
 <br>
 アプリのインストールはMicrosoftストアから<br>
 https://apps.microsoft.com/detail/9P5W7QTSH297?hl=ja-jp&gl=JP&ocid=pdpshare
+<br>
+アプリの操作説明はこちらから<br>
+https://blog.calocenrieti.com/blog/wol_names_blacked_out_win/
 
 ## 技術的ポイント
 - Ultralytics yolo26をデータセットを準備してPythonで学習、ONNXにエクスポート、onnxsimでシンプル化、Modeloptで入出力以外をFP16に変更。
