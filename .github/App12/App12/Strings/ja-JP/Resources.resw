@@ -1,0 +1,274 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <!-- 
+    Microsoft ResX Schema 
+    
+    Version 2.0
+    
+    The primary goals of this format is to allow a simple XML format 
+    that is mostly human readable. The generation and parsing of the 
+    various data types are done through the TypeConverter classes 
+    associated with the data types.
+    
+    Example:
+    
+    ... ado.net/XML headers & schema ...
+    <resheader name="resmimetype">text/microsoft-resx</resheader>
+    <resheader name="version">2.0</resheader>
+    <resheader name="reader">System.Resources.ResXResourceReader, System.Windows.Forms, ...</resheader>
+    <resheader name="writer">System.Resources.ResXResourceWriter, System.Windows.Forms, ...</resheader>
+    <data name="Name1"><value>this is my long string</value><comment>this is a comment</comment></data>
+    <data name="Color1" type="System.Drawing.Color, System.Drawing">Blue</data>
+    <data name="Bitmap1" mimetype="application/x-microsoft.net.object.binary.base64">
+        <value>[base64 mime encoded serialized .NET Framework object]</value>
+    </data>
+    <data name="Icon1" type="System.Drawing.Icon, System.Drawing" mimetype="application/x-microsoft.net.object.bytearray.base64">
+        <value>[base64 mime encoded string representing a byte array form of the .NET Framework object]</value>
+        <comment>This is a comment</comment>
+    </data>
+                
+    There are any number of "resheader" rows that contain simple 
+    name/value pairs.
+    
+    Each data row contains a name, and value. The row also contains a 
+    type or mimetype. Type corresponds to a .NET class that support 
+    text/value conversion through the TypeConverter architecture. 
+    Classes that don't support this are serialized and stored with the 
+    mimetype set.
+    
+    The mimetype is used for serialized objects, and tells the 
+    ResXResourceReader how to depersist the object. This is currently not 
+    extensible. For a given mimetype the value must be set accordingly:
+    
+    Note - application/x-microsoft.net.object.binary.base64 is the format 
+    that the ResXResourceWriter will generate, however the reader can 
+    read any of the formats listed below.
+    
+    mimetype: application/x-microsoft.net.object.binary.base64
+    value   : The object must be serialized with 
+            : System.Runtime.Serialization.Formatters.Binary.BinaryFormatter
+            : and then encoded with base64 encoding.
+    
+    mimetype: application/x-microsoft.net.object.soap.base64
+    value   : The object must be serialized with 
+            : System.Runtime.Serialization.Formatters.Soap.SoapFormatter
+            : and then encoded with base64 encoding.
+
+    mimetype: application/x-microsoft.net.object.bytearray.base64
+    value   : The object must be serialized into a byte array 
+            : using a System.ComponentModel.TypeConverter
+            : and then encoded with base64 encoding.
+    -->
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="metadata">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" />
+              </xsd:sequence>
+              <xsd:attribute name="name" use="required" type="xsd:string" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="assembly">
+            <xsd:complexType>
+              <xsd:attribute name="alias" type="xsd:string" />
+              <xsd:attribute name="name" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1" />
+              <xsd:attribute name="type" type="xsd:string" msdata:Ordinal="3" />
+              <xsd:attribute name="mimetype" type="xsd:string" msdata:Ordinal="4" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="MoreAppBarButton.ToolTipService.ToolTip" xml:space="preserve">
+    <value>その他...</value>
+  </data>
+  <data name="DebugLogExport.Text" xml:space="preserve">
+    <value>デバッグログ出力</value>
+  </data>
+  <data name="LanguageJP.Text" xml:space="preserve">
+    <value>日本語UI（再起動後）</value>
+  </data>
+  <data name="LicenseButton.Text" xml:space="preserve">
+    <value>ライセンス</value>
+  </data>
+  <data name="AboutMenuItem.Text" xml:space="preserve">
+    <value>WoLNamesBlackedOut について</value>
+  </data>
+  <data name="SaveImageButton.Label" xml:space="preserve">
+    <value>画像保存</value>
+  </data>
+  <data name="SaveImageButton.ToolTipService.ToolTip" xml:space="preserve">
+    <value>プレビュー画像を保存</value>
+  </data>
+  <data name="ToggleThemeButton.ToolTipService.ToolTip" xml:space="preserve">
+    <value>テーマ切替</value>
+  </data>
+  <data name="SelectFileSectionTitle.Text" xml:space="preserve">
+    <value>ファイル選択 / ドラッグ＆ドロップ</value>
+  </data>
+  <data name="OpenFileText.Text" xml:space="preserve">
+    <value>ファイルを開く</value>
+  </data>
+  <data name="SettingSectionTitle.Text" xml:space="preserve">
+    <value>設定</value>
+  </data>
+  <data name="BlackedOutTypeText.Text" xml:space="preserve">
+    <value> BlackedOutタイプ</value>
+  </data>
+  <data name="BlackedOutColorText.Text" xml:space="preserve">
+    <value> BlackedOutカラー</value>
+  </data>
+  <data name="FixedFrameTypeText.Text" xml:space="preserve">
+    <value> 固定マスクタイプ</value>
+  </data>
+  <data name="FixedFrameColorText.Text" xml:space="preserve">
+    <value> 固定マスクカラー</value>
+  </data>
+  <data name="YoloThresholdSlider.Header" xml:space="preserve">
+    <value>YOLO しきい値</value>
+  </data>
+  <data name="Add_Copyright.Content" xml:space="preserve">
+    <value>Copyright画像を追加</value>
+  </data>
+  <data name="SelectCopyrightImageButton.ToolTipService.ToolTip" xml:space="preserve">
+    <value>Copyright画像を選択</value>
+  </data>
+  <data name="ExcludeByNameEnabledCheckBox.Content" xml:space="preserve">
+    <value>名前で対象外を有効化</value>
+  </data>
+  <data name="OpenExcludeByNameSettingsButton.Content" xml:space="preserve">
+    <value>対象外名設定...</value>
+  </data>
+  <data name="PreviewSectionTitle.Text" xml:space="preserve">
+    <value>プレビュー</value>
+  </data>
+  <data name="PreviewButtonText.Text" xml:space="preserve">
+    <value>プレビュー開始</value>
+  </data>
+  <data name="SetToStartText.Text" xml:space="preserve">
+    <value> 開始位置に設定</value>
+  </data>
+  <data name="SetToEndText.Text" xml:space="preserve">
+    <value> 終了位置に設定</value>
+  </data>
+  <data name="MovieRenderingSectionTitle.Text" xml:space="preserve">
+    <value>動画レンダリング</value>
+  </data>
+  <data name="Start_min.Header" xml:space="preserve">
+    <value>開始(分):</value>
+  </data>
+  <data name="Start_sec.Header" xml:space="preserve">
+    <value>開始(秒):</value>
+  </data>
+  <data name="End_min.Header" xml:space="preserve">
+    <value>終了(分):</value>
+  </data>
+  <data name="End_sec.Header" xml:space="preserve">
+    <value>終了(秒):</value>
+  </data>
+  <data name="BitrateSlideBar.Header" xml:space="preserve">
+    <value>ビットレート(Mbps)</value>
+  </data>
+  <data name="BlackedOutStartButtonText.Text" xml:space="preserve">
+    <value> BlackedOut 開始</value>
+  </data>
+  <data name="OptimizationModeComboBox.ToolTipService.ToolTip" xml:space="preserve">
+    <value>段階的パフォーマンスモード</value>
+  </data>
+  <data name="StopText.Text" xml:space="preserve">
+    <value> 停止</value>
+  </data>
+  <data name="ForX.Content" xml:space="preserve">
+    <value>ForX(Twitter)</value>
+  </data>
+  <data name="ForX.ToolTipService.ToolTip" xml:space="preserve">
+    <value>幅1280px / 30FPS に制限</value>
+  </data>
+  <data name="DisableAudio.Content" xml:space="preserve">
+    <value>音声なし</value>
+  </data>
+  <data name="DisableAudio.ToolTipService.ToolTip" xml:space="preserve">
+    <value>チェック時、出力動画から音声トラックを除外します</value>
+  </data>
+  <data name="ProgressSectionTitle.Text" xml:space="preserve">
+    <value>進行状況</value>
+  </data>
+  <data name="ElapsedLabel.Text" xml:space="preserve">
+    <value>経過:</value>
+  </data>
+  <data name="ElapsedUnit.Text" xml:space="preserve">
+    <value>秒</value>
+  </data>
+  <data name="FpsLabel.Text" xml:space="preserve">
+    <value>FPS:</value>
+  </data>
+  <data name="FpsUnit.Text" xml:space="preserve">
+    <value>fps</value>
+  </data>
+  <data name="EtaLabel.Text" xml:space="preserve">
+    <value>残り:</value>
+  </data>
+  <data name="EtaUnit.Text" xml:space="preserve">
+    <value>秒</value>
+  </data>
+  <data name="InfoBar.Message" xml:space="preserve">
+    <value>TensorRTエンジンのビルドに成功しました！</value>
+  </data>
+  <data name="PreviewHelpText.Text" xml:space="preserve">
+    <value>プレビュー画像上で:
+ 左クリック : 固定マスクを設定
+ 右クリック : 固定マスクをすべて解除
+ CTRL + 左ドラッグ : Copyright画像を移動
+ CTRL + マウスホイール : Copyright画像を拡大縮小</value>
+  </data>
+  <data name="Runtime.PreviewStart" xml:space="preserve">
+    <value>プレビュー開始</value>
+  </data>
+  <data name="Runtime.PreviewStop" xml:space="preserve">
+    <value>プレビュー停止</value>
+  </data>
+  <data name="Runtime.BlackedOutStart" xml:space="preserve">
+    <value> BlackedOut開始</value>
+  </data>
+  <data name="Runtime.BlackedOutStop" xml:space="preserve">
+    <value> BlackedOut停止</value>
+  </data>
+</root>
