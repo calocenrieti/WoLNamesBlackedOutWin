@@ -13,9 +13,12 @@ https://blog.calocenrieti.com/blog/wol_names_blacked_out_win/
 - Ultralytics yolo26をデータセットを準備してPythonで学習、ONNXにエクスポート、onnxsimでシンプル化、Modeloptで入出力以外をFP16に変更。
 - UIをC# WinUI3、ONNX推論や動画入出力をC++で作成
 - ONNX推論にはWindowsMLを利用。TensorRT-RTX、MigraphX、OpenVINO、DirectMLの中から使えるものを使う。
-- 動画入出力にはFFmpegを利用
-- 動画入力から前処理、推論、後処理、動画出力をGPU内で完結するzero-copy（但しIntel QSV利用時は部分的にCPUコピーが発生する）
-- AIが9割、人間が1割くらいでコード書きました
+- 動画入出力にはFFmpeg dllを利用。
+- 動画入力から前処理、推論、後処理、動画出力をGPU内で完結するzero-copyでパフォーマンス改善しています。（但しIntel QSV利用時は部分的にCPUコピーが発生する）
+- 動画入出力、推論、OCRをスレッド対応しています。
+- PaddleOCRを利用し名前をOCRしてマスク対象外を判定しています。
+- BYTETRACKで追跡することでOCR頻度を下げてパフォーマンス対策しています。
+- AIが9割、人間が1割くらいでコード書きました。
 
 ## License
 This project is licensed under the GPL v2 (or later).
