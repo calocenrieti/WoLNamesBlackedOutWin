@@ -511,3 +511,17 @@ FodyWeavers.xsd
 /.github/App12/App12/my_yolov8m_s_dy_20251006.onnx
 /.github/App12/App12/my_yolov8m_s_dy_yolo11.onnx
 /.github/App12/App12/my_yolov8m_s_yolo11.onnx
+.github/WoLNamesBlackedOut_DLL/仕様書.md
+/.github/App12/App12/c_ppocr-v5-rec_sim.onnx
+/.github/App12/App12/avcodec-62.dll
+/.github/App12/App12/avdevice-62.dll
+/.github/App12/App12/avfilter-11.dll
+/.github/App12/App12/avformat-62.dll
+/.github/App12/App12/avutil-60.dll
+/.github/App12/App12/ffmpeg.exe
+/.github/App12/App12/ffplay.exe
+/.github/App12/App12/ffprobe.exe
+/.github/App12/App12/swresample-6.dll
+/.github/App12/App12/swscale-9.dll
+/.github/App12/App12/codexffmpeg-8.1.2.zip
+/.github/App12/App12/ppocrv5_en_dict.txt
