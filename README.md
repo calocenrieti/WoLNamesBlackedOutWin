@@ -20,6 +20,8 @@ https://blog.calocenrieti.com/blog/wol_names_blacked_out_win/
 - BYTETRACKで追跡することでOCR頻度を下げてパフォーマンス対策しています。
 - AIが9割、人間が1割くらいでコード書きました。
 
+# **現在ライセンスが競合しているので早急にffmpegをlgplでビルドし直す予定です**
+
 ## License
 This project is licensed under the GPL v2 (or later).
 
