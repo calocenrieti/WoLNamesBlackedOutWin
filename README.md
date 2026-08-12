@@ -20,10 +20,8 @@ https://blog.calocenrieti.com/blog/wol_names_blacked_out_win/
 - BYTETRACKで追跡することでOCR頻度を下げてパフォーマンス対策しています。
 - AIが9割、人間が1割くらいでコード書きました。
 
-# **現在ライセンスが競合しているので早急にffmpegをlgplでビルドし直す予定です**
-
 ## License
-This project is licensed under the GPL v2 (or later).
+This project is licensed under the LGPL v2 (or later).
 
 The distribution includes third-party libraries under their respective licenses.
 See the LICENSES folder for details.
@@ -32,7 +30,7 @@ See the LICENSES folder for details.
 
 This project incorporates the following third-party components:
 
-- **[FFmpeg](https://ffmpeg.org/)** (GPLv2)
+- **[FFmpeg](https://ffmpeg.org/)** (LGPLv2)
 - **[ByteTrack-cpp](https://github.com/derpda/ByteTrack-cpp)** (MIT)
 - **[Eigen](https://gitlab.com/libeigen/eigen)** (MPL 2.0)
 
