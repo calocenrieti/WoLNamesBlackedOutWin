@@ -51,8 +51,17 @@
     <None Remove="cufftw64_11.dll" />
     <None Remove="deepfillv2_mod_simp_fp16.onnx" />
     <None Remove="ffmpeg.exe" />
+    <None Remove="ffmpeg_source.zip" />
     <None Remove="ffplay.exe" />
     <None Remove="ffprobe.exe" />
+    <None Remove="libbz2-1.dll" />
+    <None Remove="libgcc_s_seh-1.dll" />
+    <None Remove="libiconv-2.dll" />
+    <None Remove="liblzma-5.dll" />
+    <None Remove="libstdc++-6.dll" />
+    <None Remove="libvpl-2.dll" />
+    <None Remove="libwinpthread-1.dll" />
+    <None Remove="libzimg-2.dll" />
     <None Remove="my_yolov8m_s.onnx" />
     <None Remove="my_yolov8m_s.onnx_" />
     <None Remove="my_yolov8m_s_32.onnx" />
@@ -84,12 +93,10 @@
     <None Remove="tensorrt_rtx_1_2.dll" />
     <None Remove="tensorrt_rtx_1_3.dll" />
     <None Remove="WoLNamesBlackedOut_DLL.dll" />
+    <None Remove="zlib1.dll" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="avcodec-62.dll">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-    <Content Include="avdevice-62.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="avfilter-11.dll">
@@ -101,16 +108,37 @@
     <Content Include="avutil-60.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="codexffmpeg-8.1.2.zip">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
     <Content Include="ffmpeg.exe">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="ffplay.exe">
+    <Content Include="ffmpeg_source.zip">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="ffprobe.exe">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="libbz2-1.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="libgcc_s_seh-1.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="libiconv-2.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="liblzma-5.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="libstdc++-6.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="libvpl-2.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="libwinpthread-1.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="libzimg-2.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="my_yolov8m_s.onnx">
@@ -132,6 +160,9 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="WoLNamesBlackedOut_DLL.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="zlib1.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

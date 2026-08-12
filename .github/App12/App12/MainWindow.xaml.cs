@@ -145,6 +145,7 @@ namespace WoLNamesBlackedOut
 
         private Microsoft.UI.Xaml.DispatcherTimer timer;
     private Microsoft.UI.Xaml.DispatcherTimer previewTimer;
+        private Microsoft.UI.Xaml.DispatcherTimer previewStatusTimer;
         private Stopwatch stopwatch;
     private bool previewSessionOpen = false;
     private bool previewTickBusy = false;
@@ -334,6 +335,7 @@ namespace WoLNamesBlackedOut
             {
                 timer?.Stop();
                 previewTimer?.Stop();
+                previewStatusTimer?.Stop();
             }
             catch
             {
@@ -341,7 +343,7 @@ namespace WoLNamesBlackedOut
 
             try
             {
-                StopRealtimePreviewSession();
+                StopRealtimePreviewSession(skipNativeClose: true);
             }
             catch
             {
@@ -353,6 +355,45 @@ namespace WoLNamesBlackedOut
             }
             catch
             {
+            }
+        }
+
+        private void PreviewStatusTimer_Tick(object? sender, object e)
+        {
+            if (isWindowClosing)
+            {
+                return;
+            }
+
+            var latestStatus = FrameProcessor.LatestStatusMessage;
+            if (!string.IsNullOrWhiteSpace(latestStatus))
+            {
+                FFMpeg_text.Text = latestStatus;
+            }
+        }
+
+        private void BeginPreviewStatusFeedback(string initialMessage)
+        {
+            FrameProcessor.PrepareStatusTracking();
+            if (!string.IsNullOrWhiteSpace(initialMessage))
+            {
+                FFMpeg_text.Text = initialMessage;
+            }
+            previewStatusTimer?.Start();
+        }
+
+        private void EndPreviewStatusFeedback(string fallbackMessage = "")
+        {
+            previewStatusTimer?.Stop();
+
+            var latestStatus = FrameProcessor.LatestStatusMessage;
+            if (!string.IsNullOrWhiteSpace(latestStatus))
+            {
+                FFMpeg_text.Text = latestStatus;
+            }
+            else if (!string.IsNullOrWhiteSpace(fallbackMessage))
+            {
+                FFMpeg_text.Text = fallbackMessage;
             }
         }
 
@@ -802,6 +843,12 @@ namespace WoLNamesBlackedOut
                 Interval = TimeSpan.FromMilliseconds(25)
             };
             previewTimer.Tick += PreviewTimer_Tick;
+
+            previewStatusTimer = new Microsoft.UI.Xaml.DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(120)
+            };
+            previewStatusTimer.Tick += PreviewStatusTimer_Tick;
 
             BlackedOutSlideBar.ValueChanged += PreviewMaskSetting_ValueChanged;
             FixedFrameSlideBar.ValueChanged += PreviewMaskSetting_ValueChanged;
@@ -1370,36 +1417,80 @@ namespace WoLNamesBlackedOut
                         v_width = width;
                     if (int.TryParse(properties["height"], out int height))
                         v_height = height;
-                    if (double.TryParse(properties["r_frame_rate"], out double frameRate))
-                        v_fps = (int)frameRate;
-                    if (int.TryParse(properties["nb_frames"], out int nbFrames))
+                    double frameRate = 0;
+                    if (properties.TryGetValue("avg_frame_rate", out string avgFrameRateText)
+                        && double.TryParse(avgFrameRateText, NumberStyles.Float, CultureInfo.InvariantCulture, out double avgFrameRate)
+                        && avgFrameRate > 0)
+                    {
+                        frameRate = avgFrameRate;
+                    }
+                    else if (properties.TryGetValue("r_frame_rate", out string rawFrameRateText)
+                        && double.TryParse(rawFrameRateText, NumberStyles.Float, CultureInfo.InvariantCulture, out double rawFrameRate)
+                        && rawFrameRate > 0)
+                    {
+                        frameRate = rawFrameRate;
+                    }
+
+                    v_fps = Math.Max(1, (int)Math.Round(frameRate > 0 ? frameRate : 30.0, MidpointRounding.AwayFromZero));
+
+                    double durationSeconds = 0;
+                    if (properties.TryGetValue("duration", out string durationText))
+                    {
+                        _ = double.TryParse(durationText, NumberStyles.Float, CultureInfo.InvariantCulture, out durationSeconds);
+                    }
+
+                    if (int.TryParse(properties.GetValueOrDefault("nb_frames", "0"), NumberStyles.Integer, CultureInfo.InvariantCulture, out int nbFrames) && nbFrames > 0)
                     {
                         v_nb_frames = nbFrames;
-                        float mod_frame = (float)(nbFrames % frameRate);
-                        int mod_frame_sec = mod_frame > 0 ? 1 : 0;
-                        int all_sec = (int)(nbFrames / frameRate);
-                        int all_min = (int)(all_sec / 60);
-                        int mod_sec = (int)(all_sec - all_min * 60) + mod_frame_sec;
-                        if (mod_sec == 60)
-                        {
-                            all_min = all_min + 1;
-                            mod_sec = 0;
-                        }
-                        Start_min.Value = 0;
-                        Start_sec.Value = 0;
-                        End_min.Value = all_min;
-                        End_sec.Value = mod_sec;
-                        Start_min.Maximum = all_min;
-                        End_min.Maximum = all_min;
-                        FrameSlideBar.Value = 0;
-                        FrameSlideBar.Maximum = all_sec - mod_frame_sec;
-                        FrameTextBlock_e.Text = $"{all_min}:{mod_sec.ToString("D2")}";
                     }
+                    else if (durationSeconds > 0)
+                    {
+                        v_nb_frames = Math.Max(1, (int)Math.Round(durationSeconds * Math.Max(frameRate, 1.0), MidpointRounding.AwayFromZero));
+                    }
+                    else
+                    {
+                        v_nb_frames = Math.Max(1, v_nb_frames);
+                    }
+
+                    int totalSeconds = 0;
+                    if (durationSeconds > 0)
+                    {
+                        totalSeconds = Math.Max(1, (int)Math.Floor(durationSeconds));
+                    }
+                    else
+                    {
+                        totalSeconds = Math.Max(1, (int)Math.Floor(v_nb_frames / (double)Math.Max(1, v_fps)));
+                    }
+
+                    int totalMinutes = totalSeconds / 60;
+                    int remainingSeconds = totalSeconds % 60;
+
+                    Start_min.Value = 0;
+                    Start_sec.Value = 0;
+                    End_min.Value = totalMinutes;
+                    End_sec.Value = remainingSeconds;
+                    Start_min.Maximum = totalMinutes;
+                    End_min.Maximum = totalMinutes;
+                    FrameSlideBar.Value = 0;
+                    FrameSlideBar.Maximum = totalSeconds;
+                    FrameTextBlock_e.Text = $"{totalMinutes}:{remainingSeconds:D2}";
+
                     v_color_primaries = properties["color_primaries"];
                     v_hasAudio = properties.TryGetValue("has_audio", out var audioValue) && audioValue == "true";
                 }
 
-                bool opened = await StartRealtimePreviewSessionAsync(v_file_path);
+                BeginPreviewStatusFeedback(GetLocalizedString("Runtime.PreviewInitializing", "Preparing preview..."));
+                bool opened = false;
+                try
+                {
+                    opened = await StartRealtimePreviewSessionAsync(v_file_path);
+                }
+                finally
+                {
+                    EndPreviewStatusFeedback(opened
+                        ? GetLocalizedString("Runtime.PreviewReady", "Preview ready")
+                        : GetLocalizedString("Runtime.PreviewInitFailed", "Preview initialization failed"));
+                }
                 if (opened)
                 {
                     previewFrameIndex = 0;
@@ -1858,6 +1949,12 @@ namespace WoLNamesBlackedOut
                 }
             }
 
+            public static void PrepareStatusTracking()
+            {
+                TryRegisterStatusCallback();
+                ResetLatestStatusMessage();
+            }
+
             public static int MaskTypeToNative(MaskTypeKind value)
             {
                 return (int)value;
@@ -1928,8 +2025,7 @@ namespace WoLNamesBlackedOut
             {
                 return Task.Run(() =>
                 {
-                    TryRegisterStatusCallback();
-                    ResetLatestStatusMessage();
+                    PrepareStatusTracking();
                     Interlocked.Exchange(ref _latestProcessedFrames, 0);
                     return ProcessVideo(inputVideoPath, outputVideoPath, codec, hwaccel, width, height, fps, trimStartSeconds, trimEndSeconds, confThreshold,
                         colorPrimaries, rects, count, nameColor, fixframeColor, copyright,
@@ -1976,6 +2072,8 @@ namespace WoLNamesBlackedOut
                 bool copyright, string blackedOut, string fixedFrame, int blackedout_param, int fixedFrame_param, float confThreshold,
                 string copyrightImagePath)
             {
+                PrepareStatusTracking();
+
                 var previewParams = new NativePreviewParams
                 {
                     file_path = image_path_str,
@@ -2056,6 +2154,8 @@ namespace WoLNamesBlackedOut
 
             public static int PreviewOpenSession(string sourcePath, float confThreshold, string copyrightImagePath)
             {
+                PrepareStatusTracking();
+
                 var previewParams = new NativePreviewParams
                 {
                     file_path = sourcePath,
@@ -2184,12 +2284,15 @@ namespace WoLNamesBlackedOut
 
         private void StopRealtimePreviewSession(bool skipNativeClose = false)
         {
-            previewTimer.Stop();
+            previewTimer?.Stop();
             previewLayoutInitialized = false;
             copyrightDragging = false;
             if (previewSessionOpen)
             {
-                if (!skipNativeClose)
+                bool shouldSkipNativeClose = skipNativeClose || isWindowClosing || previewTickBusy;
+                previewSessionOpen = false;
+
+                if (!shouldSkipNativeClose)
                 {
                     try
                     {
@@ -2200,7 +2303,6 @@ namespace WoLNamesBlackedOut
                         Debug.WriteLine($"PreviewCloseSessionSafe failed: {ex.Message}");
                     }
                 }
-                previewSessionOpen = false;
             }
         }
 
@@ -2751,7 +2853,7 @@ namespace WoLNamesBlackedOut
         private async Task<Dictionary<string, string>> GetVideoProperties(StorageFile file)
         {
             var ffprobePath = System.IO.Path.Combine(AppContext.BaseDirectory, "ffprobe.exe");
-            var arguments = $"-v error -select_streams v:0 -show_entries stream=width,height,r_frame_rate,nb_frames,color_primaries -of default=nw=1:nk=1 \"{file.Path}\"";
+            var arguments = $"-v error -select_streams v:0 -show_entries stream=width,height,color_primaries,r_frame_rate,avg_frame_rate,nb_frames:format=duration -of default=nw=1 \"{file.Path}\"";
 
             var processStartInfo = new ProcessStartInfo
             {
@@ -2816,23 +2918,37 @@ namespace WoLNamesBlackedOut
         {
             var properties = new Dictionary<string, string>();
             var lines = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-            var keys = new[] { "width", "height", "color_primaries", "r_frame_rate", "nb_frames" };
-
-            for (int i = 0; i < lines.Length && i < keys.Length; i++)
+            foreach (var line in lines)
             {
-                if (keys[i] == "r_frame_rate")
+                int separatorIndex = line.IndexOf('=');
+                if (separatorIndex <= 0 || separatorIndex >= line.Length - 1)
                 {
-                    var parts = lines[i].Split('/');
-                    if (parts.Length == 2 && int.TryParse(parts[0], out int numerator) && int.TryParse(parts[1], out int denominator))
-                    {
-                        properties[keys[i]] = (numerator / (double)denominator).ToString();
-                    }
-                }
-                else
-                {
-                    properties[keys[i]] = lines[i];
+                    continue;
                 }
 
+                string key = line.Substring(0, separatorIndex).Trim();
+                string value = line.Substring(separatorIndex + 1).Trim();
+
+                if (string.IsNullOrWhiteSpace(key) || string.IsNullOrWhiteSpace(value) || string.Equals(value, "N/A", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (key == "r_frame_rate" || key == "avg_frame_rate")
+                {
+                    var parts = value.Split('/');
+                    if (parts.Length == 2
+                        && double.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out double numerator)
+                        && double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out double denominator)
+                        && denominator > 0)
+                    {
+                        properties[key] = (numerator / denominator).ToString(CultureInfo.InvariantCulture);
+                    }
+
+                    continue;
+                }
+
+                properties[key] = value;
             }
 
             return properties;
@@ -3041,7 +3157,7 @@ namespace WoLNamesBlackedOut
                         new HyperlinkButton { Content = "Discord", NavigateUri = new Uri("https://discord.gg/q2Hqr4tD8v"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center},
                         new HyperlinkButton { Content = "GitHub", NavigateUri = new Uri("https://github.com/calocenrieti/WoLNamesBlackedOutWin"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 12) ,HorizontalAlignment = HorizontalAlignment.Center},
                         new HyperlinkButton { Content = "Donate", NavigateUri = new Uri("https://buymeacoffee.com/calocenrieti"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 12) ,HorizontalAlignment = HorizontalAlignment.Center},
-                        new TextBlock { Text = "This software uses FFmpeg licensed under the GPLv2 \nand its source can be downloaded https://github.com/FFmpeg/FFmpeg.git", FontSize=12,Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 8) ,HorizontalAlignment = HorizontalAlignment.Center,TextWrapping=TextWrapping.Wrap}
+                        new TextBlock { Text = "This software uses FFmpeg licensed under the LGPLv2 \nand its source can be downloaded https://github.com/FFmpeg/FFmpeg.git", FontSize=12,Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 8) ,HorizontalAlignment = HorizontalAlignment.Center,TextWrapping=TextWrapping.Wrap}
                     }
                 },
                 CloseButtonText = "Close"
@@ -3061,7 +3177,7 @@ namespace WoLNamesBlackedOut
                         Children =
                         {
                             //c++
-                            new HyperlinkButton { Content = "FFmpeg 8.12", NavigateUri = new Uri("https://www.gnu.org/licenses/old-licenses/gpl-2.0.html"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "FFmpeg 9.01", NavigateUri = new Uri("http://www.gnu.org/licenses/old-licenses/lgpl-2.1.html"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "ByteTrack-cpp", NavigateUri = new Uri("https://github.com/derpda/ByteTrack-cpp/blob/main/LICENSE"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "Eigen 5.0.0", NavigateUri = new Uri("https://gitlab.com/libeigen/eigen/-/blob/master/COPYING.APACHE"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "Microsoft.Windows.AI.MachineLearning 2.2.12", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.Windows.AI.MachineLearning/2.2.12/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
@@ -3115,7 +3231,18 @@ namespace WoLNamesBlackedOut
 
             if (PickAFileOutputTextBlock_text.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase)) //動画の時
             {
-                bool opened = await StartRealtimePreviewSessionAsync(v_file_path);
+                BeginPreviewStatusFeedback(GetLocalizedString("Runtime.PreviewInitializing", "Preparing preview..."));
+                bool opened = false;
+                try
+                {
+                    opened = await StartRealtimePreviewSessionAsync(v_file_path);
+                }
+                finally
+                {
+                    EndPreviewStatusFeedback(opened
+                        ? GetLocalizedString("Runtime.PreviewReady", "Preview ready")
+                        : GetLocalizedString("Runtime.PreviewInitFailed", "Preview initialization failed"));
+                }
                 if (!opened)
                 {
                     InfoBar.Message = "Preview initialization failed";
@@ -3178,7 +3305,19 @@ namespace WoLNamesBlackedOut
                 b = FixedFrame_color_icon_color.B
             };
 
-            await FrameProcessor.Runpreview_apiAsync(outputPath, rectInfos, rectInfos.Length, BlackedOut_color_icon_color_info, FixedFrame_color_icon_color_Info, Add_Copyright.IsChecked.Value, GetComboText(BlackedOut_ComboBox, "Solid"), GetComboText(FixedFrame_ComboBox, "Solid"), (int)BlackedOutSlideBar.Value, (int)FixedFrameSlideBar.Value, GetYoloThreshold(), copyrightImagePath ?? string.Empty);
+            BeginPreviewStatusFeedback(GetLocalizedString("Runtime.PreviewInitializing", "Preparing preview..."));
+            bool previewApiSucceeded = false;
+            try
+            {
+                await FrameProcessor.Runpreview_apiAsync(outputPath, rectInfos, rectInfos.Length, BlackedOut_color_icon_color_info, FixedFrame_color_icon_color_Info, Add_Copyright.IsChecked.Value, GetComboText(BlackedOut_ComboBox, "Solid"), GetComboText(FixedFrame_ComboBox, "Solid"), (int)BlackedOutSlideBar.Value, (int)FixedFrameSlideBar.Value, GetYoloThreshold(), copyrightImagePath ?? string.Empty);
+                previewApiSucceeded = true;
+            }
+            finally
+            {
+                EndPreviewStatusFeedback(previewApiSucceeded
+                    ? GetLocalizedString("Runtime.PreviewReady", "Preview ready")
+                    : GetLocalizedString("Runtime.PreviewInitFailed", "Preview initialization failed"));
+            }
 
             // 保存された PNG ファイルを Image コントロールに表示
             var bitmapImage = new BitmapImage(new Uri(outputPath));

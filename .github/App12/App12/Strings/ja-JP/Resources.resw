@@ -121,7 +121,7 @@
     <value>その他...</value>
   </data>
   <data name="DebugLogExport.Text" xml:space="preserve">
-    <value>デバッグログ出力</value>
+    <value>デバッグログ出力（再起動後）</value>
   </data>
   <data name="LanguageJP.Text" xml:space="preserve">
     <value>日本語UI（再起動後）</value>

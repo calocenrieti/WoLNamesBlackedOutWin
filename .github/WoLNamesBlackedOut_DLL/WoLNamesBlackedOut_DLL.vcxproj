@@ -122,14 +122,14 @@
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
       <!-- FFmpeg GPL shared DLL 動的リンク設定 -->
-      <AdditionalIncludeDirectories>D:\\ffmpeg-8.1.2-full_build-shared\include;D:\\eigen-5.0.0;$(ProjectDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>D:\\ffmpeg_dist_4wol\include;D:\\eigen-5.0.0;$(ProjectDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <!-- FFmpeg GPL shared DLL 動的リンク設定 -->
       <AdditionalDependencies>avcodec.lib;avformat.lib;avutil.lib;swscale.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>D:\\ffmpeg-8.1.2-full_build-shared\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>D:\\ffmpeg_dist_4wol\\bin;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <EnableUAC>false</EnableUAC>
       <!-- WinML 2.0 関連 -->
       <AdditionalDependencies>avcodec.lib;avformat.lib;avutil.lib;swscale.lib;WindowsApp.lib;%(AdditionalDependencies)</AdditionalDependencies>
@@ -150,7 +150,7 @@
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
       <!-- FFmpeg GPL shared DLL 動的リンク設定 -->
-      <AdditionalIncludeDirectories>D:\\ffmpeg-8.1.2-full_build-shared\include;D:\\eigen-5.0.0;$(ProjectDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>D:\\ffmpeg_dist_4wol\include;D:\\eigen-5.0.0;$(ProjectDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -158,7 +158,7 @@
       <EnableUAC>false</EnableUAC>
       <!-- FFmpeg GPL shared DLL 動的リンク設定 -->
       <AdditionalDependencies>avcodec.lib;avformat.lib;avutil.lib;swscale.lib;WindowsApp.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>D:\\ffmpeg-8.1.2-full_build-shared\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>D:\\ffmpeg_dist_4wol\\bin;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <Manifest>
       <EnableSegmentHeap>true</EnableSegmentHeap>
@@ -239,3 +239,4 @@
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="..\App12\App12\bin\$(Platform)\$(Configuration)\net8.0-windows10.0.26100.0" SkipUnchangedFiles="false" />
   </Target>
 </Project>
+
