@@ -83,6 +83,7 @@
     <None Remove="tensorrt_onnxparser_rtx_1_3.dll" />
     <None Remove="tensorrt_rtx_1_2.dll" />
     <None Remove="tensorrt_rtx_1_3.dll" />
+    <None Remove="WoLNamesBlackedOut_DLL.dll" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="avcodec-62.dll">
@@ -128,6 +129,9 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="WoLNamesBlackedOut.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="WoLNamesBlackedOut_DLL.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
@@ -182,6 +186,18 @@
     <None Include="Properties\PublishProfiles\win-x64.pubxml" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Update="DirectML.dll">
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    </None>
+    <None Update="Microsoft.Windows.AI.MachineLearning.dll">
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    </None>
+    <None Update="onnxruntime.dll">
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
     <!-- Publish Properties -->
   <PropertyGroup>
     <PublishReadyToRun Condition="'$(Configuration)' == 'Debug'">False</PublishReadyToRun>
@@ -191,9 +207,6 @@
     <ApplicationIcon>WoLNamesBlackedOut.ico</ApplicationIcon>
     <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
   </PropertyGroup>
-  <Target Name="PostBuild" AfterTargets="PostBuildEvent">
-    <Exec Command="xcopy &quot;$(ProjectDir)..\..\WoLNamesBlackedOut_DLL\x64\$(Configuration)\WoLNamesBlackedOut_DLL.dll&quot; &quot;$(TargetDir)&quot; /y /d&#xD;&#xA;xcopy &quot;$(ProjectDir)..\..\packages\Microsoft.ML.OnnxRuntime.DirectML.1.24.3\runtimes\win-x64\native\onnxruntime.dll&quot; &quot;$(TargetDir)&quot; /y /d&#xD;&#xA;xcopy &quot;$(ProjectDir)..\..\packages\Microsoft.ML.OnnxRuntime.DirectML.1.24.3\runtimes\win-x64\native\onnxruntime_providers_shared.dll&quot; &quot;$(TargetDir)&quot; /y /d" />
-  </Target>
   <Target Name="PostPublish" AfterTargets="Publish">
     <Exec Command="xcopy &quot;$(ProjectDir)..\..\WoLNamesBlackedOut_DLL\x64\$(Configuration)\WoLNamesBlackedOut_DLL.dll&quot; &quot;$(PublishDir)&quot; /y /d&#xD;&#xA;xcopy &quot;$(ProjectDir)..\..\packages\Microsoft.ML.OnnxRuntime.DirectML.1.24.3\runtimes\win-x64\native\onnxruntime.dll&quot; &quot;$(PublishDir)&quot; /y /d&#xD;&#xA;xcopy &quot;$(ProjectDir)..\..\packages\Microsoft.ML.OnnxRuntime.DirectML.1.24.3\runtimes\win-x64\native\onnxruntime_providers_shared.dll&quot; &quot;$(PublishDir)&quot; /y /d&#xD;&#xA;xcopy &quot;D:\ffmpeg-8.1.2-full_build-shared\bin\avcodec-62.dll&quot; &quot;$(PublishDir)&quot; /y /d&#xD;&#xA;xcopy &quot;D:\ffmpeg-8.1.2-full_build-shared\bin\avdevice-62.dll&quot; &quot;$(PublishDir)&quot; /y /d&#xD;&#xA;xcopy &quot;D:\ffmpeg-8.1.2-full_build-shared\bin\avfilter-11.dll&quot; &quot;$(PublishDir)&quot; /y /d&#xD;&#xA;xcopy &quot;D:\ffmpeg-8.1.2-full_build-shared\bin\avformat-62.dll&quot; &quot;$(PublishDir)&quot; /y /d&#xD;&#xA;xcopy &quot;D:\ffmpeg-8.1.2-full_build-shared\bin\avutil-60.dll&quot; &quot;$(PublishDir)&quot; /y /d&#xD;&#xA;xcopy &quot;D:\ffmpeg-8.1.2-full_build-shared\bin\swresample-6.dll&quot; &quot;$(PublishDir)&quot; /y /d&#xD;&#xA;xcopy &quot;D:\ffmpeg-8.1.2-full_build-shared\bin\swscale-9.dll&quot; &quot;$(PublishDir)&quot; /y /d" />
   </Target>
