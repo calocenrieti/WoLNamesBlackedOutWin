@@ -21,7 +21,7 @@ https://blog.calocenrieti.com/blog/wol_names_blacked_out_win/
 - AIが9割、人間が1割くらいでコード書きました。
 
 ## License
-This project is licensed under the LGPL v2 (or later).
+This project is licensed under the LGPL v2.1 (or later).
 
 The distribution includes third-party libraries under their respective licenses.
 See the LICENSES folder for details.
@@ -30,7 +30,7 @@ See the LICENSES folder for details.
 
 This project incorporates the following third-party components:
 
-- **[FFmpeg](https://ffmpeg.org/)** (LGPLv2)
+- **[FFmpeg](https://ffmpeg.org/)** (LGPLv2.1)
 - **[ByteTrack-cpp](https://github.com/derpda/ByteTrack-cpp)** (MIT)
 - **[Eigen](https://gitlab.com/libeigen/eigen)** (MPL 2.0)
 
