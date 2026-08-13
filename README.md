@@ -21,7 +21,7 @@ https://blog.calocenrieti.com/blog/wol_names_blacked_out_win/
 - AIが9割、人間が1割くらいでコード書きました。
 
 ## License
-This project is licensed under the LGPL v2.1 (or later).
+This project is licensed under the MIT.
 
 The distribution includes third-party libraries under their respective licenses.
 See the LICENSES folder for details.
