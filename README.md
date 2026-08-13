@@ -21,9 +21,11 @@ https://blog.calocenrieti.com/blog/wol_names_blacked_out_win/
 - AIが9割、人間が1割くらいでコード書きました。
 
 ## License
-This project is licensed under the MIT.
-
-The distribution includes third-party libraries under their respective licenses.
+This project is licensed under the MIT.<br>
+<br>
+This software uses code of <a href=http://ffmpeg.org>FFmpeg</a> licensed under the <a href=http://www.gnu.org/licenses/old-licenses/lgpl-2.1.html>LGPLv2.1</a> and its source can be downloaded <a href=https://git.ffmpeg.org/ffmpeg.git>here</a><br>
+<br>
+The distribution includes third-party libraries under their respective licenses.<br>
 See the LICENSES folder for details.
 
 ## Third Party Libraries & Licenses
