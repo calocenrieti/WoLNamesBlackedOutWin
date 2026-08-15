@@ -141,7 +141,7 @@
                         </StackPanel>
                     </StackPanel>
                         <StackPanel Orientation="Horizontal" Margin="20,0,0,0">
-                            <Slider x:Uid="YoloThresholdSlider" x:Name="YoloThresholdSlider" Header="YOLO Threshold" Value="0.15" Minimum="0.01" Maximum="0.50" SmallChange="0.01" LargeChange="0.01" StepFrequency="0.01" SnapsTo="StepValues" Width="200" Margin="4,0,8,0" ValueChanged="YoloThresholdSlider_ValueChanged" IsThumbToolTipEnabled="True" ThumbToolTipValueConverter="{StaticResource TwoDecimalSliderToolTipConverter}" />
+                            <Slider x:Uid="YoloThresholdSlider" x:Name="YoloThresholdSlider" Header="YOLO Threshold" Value="0.15" Minimum="0.01" Maximum="0.50" SmallChange="0.01" LargeChange="0.01" StepFrequency="0.01" SnapsTo="StepValues" Width="150" Margin="4,0,8,0" ValueChanged="YoloThresholdSlider_ValueChanged" IsThumbToolTipEnabled="True" ThumbToolTipValueConverter="{StaticResource TwoDecimalSliderToolTipConverter}" />
                             <CheckBox x:Uid="Add_Copyright" x:Name="Add_Copyright" Content="Add_Copyright" IsChecked="True" Margin="16,0,0,0" />
                             <Button x:Uid="SelectCopyrightImageButton" x:Name="SelectCopyrightImageButton" Click="SelectCopyrightImageButton_Click"  Margin="6,0,0,0" ToolTipService.ToolTip="Select copyright image">
                                 <FontIcon Glyph="&#xE7C5;" />
@@ -151,48 +151,20 @@
                             <CheckBox x:Uid="ExcludeByNameEnabledCheckBox" x:Name="ExcludeByNameEnabledCheckBox" Content="Enable Exclude by Name" IsChecked="False" Checked="ExcludeByNameEnabledCheckBox_CheckedChanged" Unchecked="ExcludeByNameEnabledCheckBox_CheckedChanged" />
                             <Button x:Uid="OpenExcludeByNameSettingsButton" x:Name="OpenExcludeByNameSettingsButton" Content="Exclude Names Settings..." Margin="12,0,0,0" Click="OpenExcludeByNameSettingsButton_Click" />
                         </StackPanel>
-
-                    <Line Stroke="Gray" X1="10" Y1="0" X2="470" Y2="0" StrokeThickness="1" Margin="0,8,12,0"/>
-                    <!-- Preview Section -->
-                    <TextBlock x:Uid="PreviewSectionTitle" Text="Preview"  Style="{StaticResource SubheaderTextBlockStyle}" FontWeight="Bold" FontSize="16" Margin="20,12,4,4" VerticalAlignment="Center"></TextBlock>
-                    <StackPanel >
-                        <StackPanel  Orientation="Horizontal" Margin="12,4,4,4">
-
-                            <Slider x:Name="FrameSlideBar" Minimum="0" Maximum="100" Width="300" HorizontalAlignment="Left" Margin="12,0,0,0" ValueChanged="FrameSlideBar_ValueChanged"/>
-                            <StackPanel Orientation="Horizontal">
-                                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Right" Margin="4">
-                                    <TextBlock x:Name="FrameTextBlock_n" Text="0:00" HorizontalTextAlignment="Right" VerticalAlignment="Center"/>
-                                </StackPanel>
-                                <StackPanel VerticalAlignment="Center">
-                                    <TextBlock Text="/" HorizontalTextAlignment="Right" VerticalAlignment="Center"/>
-                                </StackPanel>
-                                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Right" Margin="4">
-                                    <TextBlock x:Name="FrameTextBlock_e" Text="0:00" HorizontalTextAlignment="Right" VerticalAlignment="Center"/>
-                                </StackPanel>
+                        <!-- Crop Settings (bottom of Setting section) -->
+                        <StackPanel Orientation="Vertical" Margin="20,8,0,0">
+                            <StackPanel>
+                                <CheckBox x:Uid="CropEnabledCheckBox" x:Name="CropEnabledCheckBox" Content="クロップを有効にする" IsChecked="False" Margin="0,0,8,0" Checked="CropEnabledCheckBox_Checked" Unchecked="CropEnabledCheckBox_Checked" />
                             </StackPanel>
-                        </StackPanel>
-                        <StackPanel Orientation="Horizontal" Margin="12,0,4,4">
-                            <ToggleButton x:Name="PreviewButton" Checked="PreviewButton_Checked" Unchecked="PreviewButton_Unchecked" Margin="12,4,4,4" Background="{ThemeResource AccentFillColorDefaultBrush}" Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}" BorderBrush="{ThemeResource AccentFillColorDefaultBrush}" Visibility="Collapsed">
-                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center" >
-                                    <FontIcon x:Name="PreviewButtonIcon" Glyph="&#xF19D;" />
-                                    <TextBlock x:Uid="PreviewButtonText" x:Name="PreviewButtonText" Text=" Preview Start"  Margin="4,0,0,0" VerticalAlignment="Center" />
-                                </StackPanel>
-                            </ToggleButton>
-                            <Button x:Name="SetSliderToStartButton" Click="SetSliderToStartButton_Click" Margin="12,4,4,4">
-                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
-                                    <FontIcon Glyph="&#xE892;" />
-                                    <TextBlock x:Uid="SetToStartText" Text=" Set to Start" Margin="4,0,0,0" VerticalAlignment="Center"/>
-                                </StackPanel>
-                            </Button>
-                            <Button x:Name="SetSliderToEndButton" Click="SetSliderToEndButton_Click" Margin="8,4,4,4">
-                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
-                                    <FontIcon Glyph="&#xE893;" />
-                                    <TextBlock x:Uid="SetToEndText" Text=" Set to End" Margin="4,0,0,0" VerticalAlignment="Center"/>
-                                </StackPanel>
-                            </Button>
-                        </StackPanel>
-                    </StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="8,0,0,0" VerticalAlignment="Center">
+                            <NumberBox x:Uid="CropTopNumberBox" x:Name="CropTopNumberBox" Header="上( px )" Value="0" Minimum="0" Maximum="0" ValueChanged="CropNumberBox_ValueChanged" Width="70" SpinButtonPlacementMode="Compact" SmallChange="1" LargeChange="10" />
+                                <NumberBox x:Uid="CropLeftNumberBox" x:Name="CropLeftNumberBox" Header="左( px )" Value="0" Minimum="0" Maximum="0" ValueChanged="CropNumberBox_ValueChanged" Width="70" SpinButtonPlacementMode="Compact" Margin="8,0,0,0" SmallChange="1" LargeChange="10" />
+                                <NumberBox x:Uid="CropRightNumberBox" x:Name="CropRightNumberBox" Header="右( px )" Value="0" Minimum="0" Maximum="0" ValueChanged="CropNumberBox_ValueChanged" Width="70" SpinButtonPlacementMode="Compact" Margin="8,0,0,0" SmallChange="1" LargeChange="10" />
+                                <NumberBox x:Uid="CropBottomNumberBox" x:Name="CropBottomNumberBox" Header="下( px )" Value="0" Minimum="0" Maximum="0" ValueChanged="CropNumberBox_ValueChanged" Width="70" SpinButtonPlacementMode="Compact" Margin="8,0,0,0" SmallChange="1" LargeChange="10" />
+                            </StackPanel>
+                        </StackPanel>   
 
+ 
 
                     <!-- Movie Rendering Section -->
                     <Line Stroke="Gray" X1="10" Y1="0" X2="470" Y2="0" StrokeThickness="1" Margin="0,8,0,0"/>
@@ -257,7 +229,12 @@
                                 <CheckBox x:Uid="DisableAudio" x:Name="DisableAudio" Content="No Audio" ToolTipService.ToolTip="When checked, output video has no audio track" IsChecked="False" Margin="4,0,0,0" />
                             </StackPanel>
                         </StackPanel>
+                        <StackPanel Margin="0,4,0,0" Orientation="Horizontal">
+                            <CheckBox x:Uid="ProcessingPreviewEnabledCheckBox" x:Name="ProcessingPreviewEnabledCheckBox" Content="Processing Preview" ToolTipService.ToolTip="Show preview while video is being processed" IsChecked="True" Margin="12,0,0,0" Checked="ProcessingPreviewEnabledCheckBox_CheckedChanged" Unchecked="ProcessingPreviewEnabledCheckBox_CheckedChanged" />
+                            <Slider x:Uid="ProcessingPreviewIntervalSlider" x:Name="ProcessingPreviewIntervalSlider" Header="Interval(s)" Value="1.0" Minimum="0.2" Maximum="3.0" SmallChange="0.1" LargeChange="0.1" StepFrequency="0.1" SnapsTo="StepValues" Width="120" Margin="12,0,0,0" ValueChanged="ProcessingPreviewIntervalSlider_ValueChanged" IsThumbToolTipEnabled="True" ThumbToolTipValueConverter="{StaticResource TwoDecimalSliderToolTipConverter}" />
+                        </StackPanel>
                     </StackPanel>
+
                     <!-- progress Section -->
                     <Line Stroke="Gray" X1="10" Y1="0" X2="470" Y2="0" StrokeThickness="1" Margin="0,8,12,0"/>
                     <TextBlock x:Uid="ProgressSectionTitle" Text="Progress"  Style="{StaticResource SubheaderTextBlockStyle}" FontWeight="Bold" FontSize="16" Margin="20,12,4,4" VerticalAlignment="Center"></TextBlock>
@@ -299,16 +276,60 @@
                 </StackPanel>
                 <StackPanel Orientation="Vertical" AllowDrop="True" Drop="RootGrid_Drop" DragOver="RootGrid_DragOver">
                     <StackPanel>
-                        <Canvas x:Name="DrawingCanvas" Background="Transparent" Height="576" AllowDrop="True" Drop="RootGrid_Drop" DragOver="RootGrid_DragOver"
-                                PointerPressed="DrawingCanvas_PointerPressed"
-                                PointerMoved="DrawingCanvas_PointerMoved"
-                                PointerReleased="DrawingCanvas_PointerReleased"
-                                PointerWheelChanged="DrawingCanvas_PointerWheelChanged">
-                            <Image x:Name="image_preview" Height="576" AllowDrop="True" Drop="RootGrid_Drop" DragOver="RootGrid_DragOver" />
-                        </Canvas>
+                        <Grid x:Name="PreviewContainer" Height="576" SizeChanged="PreviewContainer_SizeChanged">
+                            <local:CursorCanvas x:Name="DrawingCanvas" Background="Transparent" Height="576" AllowDrop="True" Drop="RootGrid_Drop" DragOver="RootGrid_DragOver"
+                                    PointerPressed="DrawingCanvas_PointerPressed"
+                                    PointerMoved="DrawingCanvas_PointerMoved"
+                                     PointerExited="DrawingCanvas_PointerExited"
+                                    PointerReleased="DrawingCanvas_PointerReleased"
+                                    PointerWheelChanged="DrawingCanvas_PointerWheelChanged">
+                                <Image x:Name="image_preview" Height="576" AllowDrop="True" Drop="RootGrid_Drop" DragOver="RootGrid_DragOver" />
+                            </local:CursorCanvas>
+                        </Grid>
                     </StackPanel>
+                    <!--<Line Stroke="Gray" X1="10" Y1="0" X2="470" Y2="0" StrokeThickness="1" Margin="0,8,12,0"/>-->
+                    <!-- Preview Section -->
+                    <!--<TextBlock x:Uid="PreviewSectionTitle" Text="Preview"  Style="{StaticResource SubheaderTextBlockStyle}" FontWeight="Bold" FontSize="16" Margin="20,12,4,4" VerticalAlignment="Center"></TextBlock>-->
+                    <StackPanel >
+                        <StackPanel  Orientation="Horizontal" Margin="12,4,4,4">
+
+                            <Slider x:Name="FrameSlideBar" Minimum="0" Maximum="100" Width="300" HorizontalAlignment="Left" Margin="0,0,0,0" ValueChanged="FrameSlideBar_ValueChanged"/>
+                            <StackPanel Orientation="Horizontal">
+                                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Right" Margin="4">
+                                    <TextBlock x:Name="FrameTextBlock_n" Text="0:00" HorizontalTextAlignment="Right" VerticalAlignment="Center"/>
+                                </StackPanel>
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock Text="/" HorizontalTextAlignment="Right" VerticalAlignment="Center"/>
+                                </StackPanel>
+                                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Right" Margin="4">
+                                    <TextBlock x:Name="FrameTextBlock_e" Text="0:00" HorizontalTextAlignment="Right" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="12,0,4,4">
+                            <ToggleButton x:Name="PreviewButton" Checked="PreviewButton_Checked" Unchecked="PreviewButton_Unchecked" Margin="0,4,4,4" Background="{ThemeResource AccentFillColorDefaultBrush}" Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}" BorderBrush="{ThemeResource AccentFillColorDefaultBrush}" Visibility="Collapsed">
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center" >
+                                    <FontIcon x:Name="PreviewButtonIcon" Glyph="&#xF19D;" />
+                                    <TextBlock x:Uid="PreviewButtonText" x:Name="PreviewButtonText" Text=" Preview Start"  Margin="4,0,0,0" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </ToggleButton>
+                            <Button x:Name="SetSliderToStartButton" Click="SetSliderToStartButton_Click" Margin="0,4,4,4">
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                    <FontIcon Glyph="&#xE892;" />
+                                    <TextBlock x:Uid="SetToStartText" Text=" Set to Start" Margin="4,0,0,0" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="SetSliderToEndButton" Click="SetSliderToEndButton_Click" Margin="8,4,4,4">
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                    <FontIcon Glyph="&#xE893;" />
+                                    <TextBlock x:Uid="SetToEndText" Text=" Set to End" Margin="4,0,0,0" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+                    </StackPanel>
+
                     <StackPanel>
-                        <TextBlock x:Uid="PreviewHelpText" Margin="4" Text="On the preview image,&#x0a; Mouse Left-click : Set fixed frame &#x0a; Mouse Right-click: Release all fixed frames &#x0a; CTRL + Left-click Drag: Move copyright image &#x0a; CTRL + Mouse Wheel: Resize copyright image" TextWrapping="Wrap"  />
+                        <TextBlock x:Uid="PreviewHelpText" Margin="4" Text="On the preview image,&#x0a; Mouse Wheel: Zoom at cursor &#x0a; Mouse Middle-button Drag: Pan preview image &#x0a; Mouse Left-click : Set fixed frame &#x0a; Mouse Right-click: Release all fixed frames &#x0a; CTRL + Left-click Drag: Move copyright image &#x0a; CTRL + Mouse Wheel: Resize copyright image" TextWrapping="Wrap"  />
                     </StackPanel>
                 </StackPanel>
             </StackPanel>

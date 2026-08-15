@@ -1778,6 +1778,13 @@ bool MaskShader::ApplyCopyrightOverlay(
     context->PSSetConstantBuffers(0, 1, copyright_constant_buffer_.GetAddressOf());
     context->VSSetConstantBuffers(0, 1, copyright_constant_buffer_.GetAddressOf());
 
+    D3D11_VIEWPORT viewport = {};
+    viewport.Width = static_cast<float>(source_desc.Width);
+    viewport.Height = static_cast<float>(source_desc.Height);
+    viewport.MaxDepth = 1.0f;
+    context->RSSetViewports(1, &viewport);
+    context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+
     // 四角形を描画
     Microsoft::WRL::ComPtr<ID3D11Buffer> quad;
     CreateFullScreenQuad(quad);
@@ -1788,6 +1795,7 @@ bool MaskShader::ApplyCopyrightOverlay(
     context->VSSetShader(mask_vertex_shader_.Get(), nullptr, 0);
 
     context->Draw(4, 0);
+    context->Flush();
 
     output = temp_output;
     return true;

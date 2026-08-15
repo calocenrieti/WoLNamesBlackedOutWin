@@ -177,6 +177,21 @@
   <data name="OpenExcludeByNameSettingsButton.Content" xml:space="preserve">
     <value>Exclude Names Settings...</value>
   </data>
+  <data name="CropEnabledCheckBox.Content" xml:space="preserve">
+    <value>Enable cropping</value>
+  </data>
+  <data name="CropTopNumberBox.Header" xml:space="preserve">
+    <value>Top (px)</value>
+  </data>
+  <data name="CropLeftNumberBox.Header" xml:space="preserve">
+    <value>Left (px)</value>
+  </data>
+  <data name="CropRightNumberBox.Header" xml:space="preserve">
+    <value>Right (px)</value>
+  </data>
+  <data name="CropBottomNumberBox.Header" xml:space="preserve">
+    <value>Bottom (px)</value>
+  </data>
   <data name="PreviewSectionTitle.Text" xml:space="preserve">
     <value>Preview</value>
   </data>
@@ -228,6 +243,15 @@
   <data name="DisableAudio.ToolTipService.ToolTip" xml:space="preserve">
     <value>When checked, output video has no audio track</value>
   </data>
+  <data name="ProcessingPreviewEnabledCheckBox.Content" xml:space="preserve">
+    <value>Processing Preview</value>
+  </data>
+  <data name="ProcessingPreviewEnabledCheckBox.ToolTipService.ToolTip" xml:space="preserve">
+    <value>Show preview while video is being processed</value>
+  </data>
+  <data name="ProcessingPreviewIntervalSlider.Header" xml:space="preserve">
+    <value>Interval(s)</value>
+  </data>
   <data name="ProgressSectionTitle.Text" xml:space="preserve">
     <value>Progress</value>
   </data>
@@ -256,6 +280,8 @@
     <value>On the preview image,
  Mouse Left-click : Set fixed frame
  Mouse Right-click: Release all fixed frames
+ Wheel: Zoom in/out on the preview image
+ Wheel drag: Pan the preview image
  CTRL + Left-click Drag: Move copyright image
  CTRL + Mouse Wheel: Resize copyright image</value>
   </data>

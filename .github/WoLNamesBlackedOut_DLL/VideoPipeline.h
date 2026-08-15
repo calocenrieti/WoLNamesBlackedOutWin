@@ -80,6 +80,21 @@ public:
 		elapsed_seconds = elapsed_seconds_.load();
 	}
 
+	/**
+	 * @brief 最新の処理済みプレビューフレームを取得
+	 * @param out_bgra 出力BGRAバッファ（呼び出し元確保）
+	 * @param buffer_size out_bgra のバイト数
+	 * @param out_width フレーム幅
+	 * @param out_height フレーム高さ
+	 * @param out_frame_index 処理済みフレーム番号（0-based）
+	 * @return 取得成功時 true
+	 */
+	bool TryCopyLatestProcessedPreviewFrame(uint8_t* out_bgra,
+		int buffer_size,
+		int& out_width,
+		int& out_height,
+		int& out_frame_index) const;
+
 private:
 	// スレッド関数
 	void DecodeThread();
@@ -270,6 +285,13 @@ private:
 	std::vector<std::string> mask_exclude_texts_;
 	int inference_frame_counter_ = 0;
 	int ocr_refresh_interval_frames_ = 30;
+
+	// 処理済み最新プレビュー（EncodeThreadで更新）
+	mutable std::mutex latest_processed_preview_mutex_;
+	std::vector<uint8_t> latest_processed_preview_bgra_;
+	int latest_processed_preview_width_ = 0;
+	int latest_processed_preview_height_ = 0;
+	std::atomic<int> latest_processed_preview_frame_index_{ -1 };
 };
 
 } // namespace WoLNamesBlackedOut::Core

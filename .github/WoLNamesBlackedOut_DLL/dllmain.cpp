@@ -144,6 +144,10 @@ extern "C" __declspec(dllexport) int __stdcall ProcessVideo(
     const char* bitrate,
     const char* preset,
     bool disable_audio,
+    int crop_top,
+    int crop_left,
+    int crop_right,
+    int crop_bottom,
     ProgressCallback progress_callback
 ) {
     {
@@ -258,6 +262,10 @@ extern "C" __declspec(dllexport) int __stdcall ProcessVideo(
     for (int i = 0; i < count && i < 64; ++i) {
         config.fixed_rects[i] = rects[i];
     }
+    config.crop_top = std::max(0, crop_top);
+    config.crop_left = std::max(0, crop_left);
+    config.crop_right = std::max(0, crop_right);
+    config.crop_bottom = std::max(0, crop_bottom);
     config.enable_copyright = copyright;
     config.copyright_image_path = (!wcopyrightCustom.empty() ? wcopyrightCustom.c_str() : wcopyrightPath.c_str());
 
@@ -337,6 +345,40 @@ extern "C" __declspec(dllexport) bool __stdcall CancelProcess() {
     return true;
 }
 
+extern "C" __declspec(dllexport) int __stdcall GetLatestProcessedPreviewFrame(
+    unsigned char* out_bgra_buffer,
+    int buffer_size,
+    int* out_width,
+    int* out_height,
+    int* out_frame_index
+) {
+    if (!out_bgra_buffer || buffer_size <= 0 || !out_width || !out_height || !out_frame_index) {
+        return -1;
+    }
+
+    std::lock_guard<std::mutex> lock(g_stateMutex);
+    if (!g_videoPipeline) {
+        return -2;
+    }
+
+    int width = 0;
+    int height = 0;
+    int frame_index = -1;
+    if (!g_videoPipeline->TryCopyLatestProcessedPreviewFrame(
+            out_bgra_buffer,
+            buffer_size,
+            width,
+            height,
+            frame_index)) {
+        return -3;
+    }
+
+    *out_width = width;
+    *out_height = height;
+    *out_frame_index = frame_index;
+    return 0;
+}
+
 // ============================================================
 // プレビューAPI
 // ============================================================
@@ -389,6 +431,19 @@ extern "C" __declspec(dllexport) int __stdcall PreviewGetFrame(
         return -2;
     }
     return 0;
+}
+
+extern "C" __declspec(dllexport) int __stdcall PreviewGetDimensions(
+    int* out_width,
+    int* out_height
+) {
+    std::lock_guard<std::mutex> lock(g_stateMutex);
+
+    if (!g_previewPipeline || !out_width || !out_height) return -1;
+
+    *out_width = static_cast<int>(g_previewPipeline->GetWidth());
+    *out_height = static_cast<int>(g_previewPipeline->GetHeight());
+    return (*out_width > 0 && *out_height > 0) ? 0 : -2;
 }
 
 extern "C" __declspec(dllexport) int __stdcall PreviewUpdateParams(

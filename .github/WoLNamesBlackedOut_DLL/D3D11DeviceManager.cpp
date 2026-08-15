@@ -543,9 +543,15 @@ bool D3D11DeviceManager::ConvertBGRAToNV12(ID3D11Texture2D* bgra, ID3D11Texture2
 	stream.Enable = TRUE;
 	stream.pInputSurface = input_view.Get();
 
-	// 入力ソース矩形を設定（BGRAテクスチャの全体）
+	// 入力ソース矩形は常に入力全面を使用する。
+	// 出力サイズが異なる場合はDestRect/TargetRect側で等比スケーリングされる。
+	// ここで入力を出力サイズへ切り詰めると、ForX + crop時に「さらにクロップ」された見え方になる。
 	RECT src_rect = { 0, 0, static_cast<LONG>(bgra_desc.Width), static_cast<LONG>(bgra_desc.Height) };
 	encode_video_context_->VideoProcessorSetStreamSourceRect(encode_video_processor_.Get(), 0, TRUE, &src_rect);
+
+	// ストリーム出力先矩形を明示（暗黙のアスペクト補正/パディング回避）
+	RECT stream_dest_rect = { 0, 0, static_cast<LONG>(nv12_desc.Width), static_cast<LONG>(nv12_desc.Height) };
+	encode_video_context_->VideoProcessorSetStreamDestRect(encode_video_processor_.Get(), 0, TRUE, &stream_dest_rect);
 
 	// 出力ターゲット矩形を設定（NV12テクスチャのサイズ）
 	RECT dest_rect = { 0, 0, static_cast<LONG>(nv12_desc.Width), static_cast<LONG>(nv12_desc.Height) };
@@ -646,9 +652,23 @@ bool D3D11DeviceManager::ConvertNV12ToBGRA(ID3D11Texture2D* nv12, ID3D11Texture2
 	stream.Enable = TRUE;
 	stream.pInputSurface = input_view.Get();
 
-	// 入力ソース矩形を設定（NV12テクスチャの全体）
-	RECT src_rect = { 0, 0, static_cast<LONG>(nv12_desc.Width), static_cast<LONG>(nv12_desc.Height) };
+	// 入力ソース矩形を設定。
+	// 1088 などのパディング行が含まれるケースでは、出力サイズに合わせてクロップし
+	// 余剰領域のスケーリング混入を避ける。
+	LONG src_w = static_cast<LONG>(nv12_desc.Width);
+	LONG src_h = static_cast<LONG>(nv12_desc.Height);
+	if (nv12_desc.Width >= bgra_desc.Width) {
+		src_w = static_cast<LONG>(bgra_desc.Width);
+	}
+	if (nv12_desc.Height >= bgra_desc.Height) {
+		src_h = static_cast<LONG>(bgra_desc.Height);
+	}
+	RECT src_rect = { 0, 0, src_w, src_h };
 	decode_video_context_->VideoProcessorSetStreamSourceRect(decode_video_processor_.Get(), 0, TRUE, &src_rect);
+
+	// ストリーム出力先矩形を明示（暗黙のアスペクト補正/パディング回避）
+	RECT stream_dest_rect = { 0, 0, static_cast<LONG>(bgra_desc.Width), static_cast<LONG>(bgra_desc.Height) };
+	decode_video_context_->VideoProcessorSetStreamDestRect(decode_video_processor_.Get(), 0, TRUE, &stream_dest_rect);
 
 	// 出力ターゲット矩形を設定（BGRAテクスチャのサイズにクロップ/スケール）
 	RECT dest_rect = { 0, 0, static_cast<LONG>(bgra_desc.Width), static_cast<LONG>(bgra_desc.Height) };

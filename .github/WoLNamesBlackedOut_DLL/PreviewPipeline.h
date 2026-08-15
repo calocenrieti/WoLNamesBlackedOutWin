@@ -113,6 +113,9 @@ public:
      */
     int GetFps() const { return fps_; }
 
+    uint32_t GetWidth() const { return is_video_ ? static_cast<uint32_t>(video_width_) : image_width_; }
+    uint32_t GetHeight() const { return is_video_ ? static_cast<uint32_t>(video_height_) : image_height_; }
+
 private:
     // 初期化ヘルパー
     bool InitializeVideo(const wchar_t* file_path);

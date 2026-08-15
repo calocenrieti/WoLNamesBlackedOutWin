@@ -177,6 +177,21 @@
   <data name="OpenExcludeByNameSettingsButton.Content" xml:space="preserve">
     <value>対象外名設定...</value>
   </data>
+  <data name="CropEnabledCheckBox.Content" xml:space="preserve">
+    <value>クロップを有効にする</value>
+  </data>
+  <data name="CropTopNumberBox.Header" xml:space="preserve">
+    <value>上 (px)</value>
+  </data>
+  <data name="CropLeftNumberBox.Header" xml:space="preserve">
+    <value>左 (px)</value>
+  </data>
+  <data name="CropRightNumberBox.Header" xml:space="preserve">
+    <value>右 (px)</value>
+  </data>
+  <data name="CropBottomNumberBox.Header" xml:space="preserve">
+    <value>下 (px)</value>
+  </data>
   <data name="PreviewSectionTitle.Text" xml:space="preserve">
     <value>プレビュー</value>
   </data>
@@ -228,6 +243,15 @@
   <data name="DisableAudio.ToolTipService.ToolTip" xml:space="preserve">
     <value>チェック時、出力動画から音声トラックを除外します</value>
   </data>
+  <data name="ProcessingPreviewEnabledCheckBox.Content" xml:space="preserve">
+    <value>処理中プレビュー</value>
+  </data>
+  <data name="ProcessingPreviewEnabledCheckBox.ToolTipService.ToolTip" xml:space="preserve">
+    <value>動画処理中にプレビューを表示します</value>
+  </data>
+  <data name="ProcessingPreviewIntervalSlider.Header" xml:space="preserve">
+    <value>間隔(秒)</value>
+  </data>
   <data name="ProgressSectionTitle.Text" xml:space="preserve">
     <value>進行状況</value>
   </data>
@@ -256,6 +280,8 @@
     <value>プレビュー画像上で:
  左クリック : 固定マスクを設定
  右クリック : 固定マスクをすべて解除
+ ホイール：プレビュー画像の拡大縮小
+ ホイールドラッグ：プレビュー画像のパン
  CTRL + 左ドラッグ : Copyright画像を移動
  CTRL + マウスホイール : Copyright画像を拡大縮小</value>
   </data>

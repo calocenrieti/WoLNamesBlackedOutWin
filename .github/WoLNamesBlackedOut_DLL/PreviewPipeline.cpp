@@ -3,6 +3,7 @@
 #include "TextMatchUtils.h"
 #include <iostream>
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <ctime>
 
@@ -25,6 +26,12 @@ static void LogFmt(const char* fmt, ...) {
     vsnprintf(buf, sizeof(buf), fmt, args);
     va_end(args);
     LogToFile(buf);
+}
+
+using PreviewClock = std::chrono::steady_clock;
+
+static double ElapsedMilliseconds(PreviewClock::time_point start) {
+    return std::chrono::duration<double, std::milli>(PreviewClock::now() - start).count();
 }
 
 // ============================================================
@@ -275,10 +282,12 @@ bool PreviewPipeline::InitializeVideo(const wchar_t* file_path) {
 
 bool PreviewPipeline::InitializeImage(const wchar_t* file_path) {
     // 画像ファイルをD3D11テクスチャに読み込み
+    const auto decodeStart = PreviewClock::now();
     if (!LoadImageToTexture(file_path, image_texture_, image_width_, image_height_)) {
         std::cerr << "Failed to load image file." << std::endl;
         return false;
     }
+    const double decodeMs = ElapsedMilliseconds(decodeStart);
 
     video_width_ = static_cast<int>(image_width_);
     video_height_ = static_cast<int>(image_height_);
@@ -286,9 +295,14 @@ bool PreviewPipeline::InitializeImage(const wchar_t* file_path) {
     fps_ = 1;
 
     // 静止画の場合、Open時に推論を実行してキャッシュ
+    const auto inferenceStart = PreviewClock::now();
     if (winml_utils_.IsModelLoaded()) {
         RunInference(image_texture_.Get(), image_width_, image_height_);
     }
+    const double inferenceMs = ElapsedMilliseconds(inferenceStart);
+
+    LogFmt("[PreviewTiming] image_decode_upload_ms=%.3f inference_total_ms=%.3f size=%ux%u\n",
+        decodeMs, inferenceMs, image_width_, image_height_);
 
     std::cout << "Image preview initialized: " << image_width_ << "x" << image_height_ << std::endl;
 
@@ -365,6 +379,8 @@ bool PreviewPipeline::GetFrame(
     if (!out_rgba_buffer || !out_width || !out_height) return false;
 
     bool result = false;
+    const auto frameStart = PreviewClock::now();
+    const auto maskStart = PreviewClock::now();
 
     if (is_video_) {
         result = GetVideoFrame(frame_index);
@@ -374,7 +390,13 @@ bool PreviewPipeline::GetFrame(
 
     if (!result || !output_texture_) return false;
 
-    return CopyTextureToRgbaBuffer(output_texture_.Get(), out_rgba_buffer, buffer_size, out_width, out_height);
+    const double maskMs = ElapsedMilliseconds(maskStart);
+    const auto readbackStart = PreviewClock::now();
+    const bool copyResult = CopyTextureToRgbaBuffer(output_texture_.Get(), out_rgba_buffer, buffer_size, out_width, out_height);
+    const double readbackMs = ElapsedMilliseconds(readbackStart);
+    LogFmt("[PreviewTiming] mask_ms=%.3f final_gpu_readback_ms=%.3f get_frame_total_ms=%.3f\n",
+        maskMs, readbackMs, ElapsedMilliseconds(frameStart));
+    return copyResult;
 }
 
 bool PreviewPipeline::GetVideoFrame(int frame_index) {
@@ -517,6 +539,7 @@ bool PreviewPipeline::RunInference(ID3D11Texture2D* source_texture, uint32_t wid
     }
 
     try {
+        const auto inferenceStart = PreviewClock::now();
         // --- モデルの実際の入力サイズを取得 ---
         const std::string& input_name = winml_utils_.GetInputNames().empty() ? "images" : winml_utils_.GetInputNames()[0];
         auto model_shape = winml_utils_.GetInputShape(input_name);
@@ -548,6 +571,7 @@ bool PreviewPipeline::RunInference(ID3D11Texture2D* source_texture, uint32_t wid
             return true;
         }
 
+        const auto readbackStart = PreviewClock::now();
         context_->CopyResource(stage_tex.Get(), source_texture);
 
         D3D11_MAPPED_SUBRESOURCE mapped = {};
@@ -603,10 +627,15 @@ bool PreviewPipeline::RunInference(ID3D11Texture2D* source_texture, uint32_t wid
             }
         }
         context_->Unmap(stage_tex.Get(), 0);
+        const double preprocessingReadbackMs = ElapsedMilliseconds(readbackStart);
 
         // --- 2. ONNX 推論実行 ---
         std::vector<int64_t> shape = {1, 3, (int64_t)MODEL_H, (int64_t)MODEL_W};
+        const auto evaluateStart = PreviewClock::now();
         auto raw_output = winml_utils_.Evaluate(input_name, input_tensor.data(), input_tensor.size(), shape);
+        const double evaluateMs = ElapsedMilliseconds(evaluateStart);
+        LogFmt("[PreviewTiming] inference_preprocess_readback_ms=%.3f inference_evaluate_ms=%.3f inference_pipeline_ms=%.3f\n",
+            preprocessingReadbackMs, evaluateMs, ElapsedMilliseconds(inferenceStart));
 
         // --- 3. YOLO26 出力パース: shape (N, detections, 6) = [x1, y1, x2, y2, score, class_id] ---
         cached_detections_.clear();
@@ -831,13 +860,44 @@ bool PreviewPipeline::ApplyMask(ID3D11Texture2D* source_texture, uint32_t width,
     }
     auto fixed_mask = mask_shader_.CreateMaskTexture(width, height, fixed_detections);
 
-    // 両方のマスクが空なら元画像をそのまま返す
+    // 両方のマスクが空でも、後段のcopyright合成は実行できるように
+    // ここでは早期returnせず、output_texture_に元画像をセットして処理継続する
     bool has_detection = detection_mask != nullptr && !active_detections.empty();
     bool has_fixed = fixed_mask != nullptr && !fixed_detections.empty();
 
     if (!has_detection && !has_fixed) {
         output_texture_ = source_texture;
         output_texture_->AddRef();
+        std::wstring overridePath = copyright_image_path_override_;
+        if (mask_params_.enable_copyright && output_texture_) {
+            if (EnsureCopyrightWatermarkLoaded(overridePath)) {
+                float scale = std::clamp(mask_params_.copyright_scale, 0.5f, 3.0f);
+                uint32_t target_w = std::max<uint32_t>(1, static_cast<uint32_t>(std::round(copyright_width_ * scale)));
+                uint32_t target_h = std::max<uint32_t>(1, static_cast<uint32_t>(std::round(copyright_height_ * scale)));
+                if (target_w > 0 && target_h > 0) {
+                    int pos_x = static_cast<int>(width) - static_cast<int>(target_w) + mask_params_.copyright_offset_x;
+                    int pos_y = static_cast<int>(height) - static_cast<int>(target_h) + mask_params_.copyright_offset_y;
+
+                    const int max_x = static_cast<int>(width) - static_cast<int>(target_w);
+                    const int max_y = static_cast<int>(height) - static_cast<int>(target_h);
+                    pos_x = std::max(0, std::min(pos_x, std::max(0, max_x)));
+                    pos_y = std::max(0, std::min(pos_y, std::max(0, max_y)));
+
+                    Microsoft::WRL::ComPtr<ID3D11Texture2D> watermarked;
+                    if (mask_shader_.ApplyCopyrightOverlay(
+                        output_texture_.Get(),
+                        copyright_srv_.Get(),
+                        target_w,
+                        target_h,
+                        pos_x,
+                        pos_y,
+                        watermarked) && watermarked.Get()) {
+                        output_texture_ = watermarked;
+                    }
+                }
+            }
+        }
+
         return true;
     }
 
@@ -1219,6 +1279,7 @@ bool PreviewPipeline::LoadImageToTexture(
     }
 
     // ピクセルデータ読み取り
+    const auto decodeStart = PreviewClock::now();
     size_t buffer_size = width * height * 4;
     std::vector<BYTE> pixelData(buffer_size);
     hr = converter->CopyPixels(nullptr, width * 4, static_cast<UINT>(buffer_size), pixelData.data());
@@ -1227,6 +1288,7 @@ bool PreviewPipeline::LoadImageToTexture(
         if (shouldUninitialize) CoUninitialize();
         return false;
     }
+    const double wicDecodeMs = ElapsedMilliseconds(decodeStart);
 
     // D3D11テクスチャ作成
     D3D11_TEXTURE2D_DESC texDesc = {};
@@ -1243,12 +1305,15 @@ bool PreviewPipeline::LoadImageToTexture(
     initData.pSysMem = pixelData.data();
     initData.SysMemPitch = width * 4;
 
+    const auto uploadStart = PreviewClock::now();
     hr = device_->CreateTexture2D(&texDesc, &initData, &out_texture);
     if (FAILED(hr)) {
         std::cerr << "Failed to create D3D11 texture. HRESULT: 0x" << std::hex << hr << std::endl;
         if (shouldUninitialize) CoUninitialize();
         return false;
     }
+    LogFmt("[PreviewTiming] wic_decode_ms=%.3f texture_upload_ms=%.3f\n",
+        wicDecodeMs, ElapsedMilliseconds(uploadStart));
 
     if (shouldUninitialize) CoUninitialize();
     return true;

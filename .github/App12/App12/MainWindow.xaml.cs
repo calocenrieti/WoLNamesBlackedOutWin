@@ -75,6 +75,22 @@ namespace WoLNamesBlackedOut
         }
     }
 
+    public sealed class CursorCanvas : Canvas
+    {
+        private Microsoft.UI.Input.InputSystemCursorShape? currentCursorShape;
+
+        public void SetCursorShape(Microsoft.UI.Input.InputSystemCursorShape shape)
+        {
+            if (currentCursorShape == shape)
+            {
+                return;
+            }
+
+            ProtectedCursor = Microsoft.UI.Input.InputSystemCursor.Create(shape);
+            currentCursorShape = shape;
+        }
+    }
+
     public sealed partial class MainWindow : Microsoft.UI.Xaml.Window
     {
         private int v_fps;
@@ -104,13 +120,407 @@ namespace WoLNamesBlackedOut
         private bool suppressPreviewToggleEvent = false;
         private bool suppressBlackedOutToggleEvent = false;
         private bool suppressPreviewFrameSliderRefresh = false;
+        private bool autoResizedForCurrentSource = false;
 
         private bool excludeByNameEnabled = false;
         private int ocrExpandPixels = 2;
         private int ocrMaxRoisPerFrame = 6;
         private int textSimilarityPercent = 85;
         private string maskExcludeTextCsv = string.Empty;
+        // Crop settings (post-processing)
+        private int cropTop = 0;
+        private int cropLeft = 0;
+        private int cropRight = 0;
+        private int cropBottom = 0;
+        private const string CropOverlayTag = "__crop_overlay__";
+        private const double CropBoundaryHitTarget = 10.0;
+        private CropDragEdge cropDragEdge = CropDragEdge.None;
+        private bool suppressCropNumberBoxValueChanged = false;
         private const string UiLanguagePreferenceKey = "LanguageJP";
+
+        private enum CropDragEdge
+        {
+            None,
+            Top,
+            Left,
+            Right,
+            Bottom
+        }
+
+        // --- Crop helpers and UI handlers ---
+        private static byte[] CropBgraBuffer_Helper(byte[] src, int srcWidth, int srcHeight, int top, int left, int right, int bottom, out int outWidth, out int outHeight)
+        {
+            outWidth = srcWidth - left - right;
+            outHeight = srcHeight - top - bottom;
+            if (outWidth <= 0 || outHeight <= 0)
+            {
+                outWidth = srcWidth;
+                outHeight = srcHeight;
+                return src;
+            }
+
+            byte[] dst = new byte[outWidth * outHeight * 4];
+            int dstRowBytes = outWidth * 4;
+
+            for (int y = 0; y < outHeight; y++)
+            {
+                int srcOffset = ((y + top) * srcWidth + left) * 4;
+                int dstOffset = y * dstRowBytes;
+                Buffer.BlockCopy(src, srcOffset, dst, dstOffset, dstRowBytes);
+            }
+
+            return dst;
+        }
+
+        private void UpdateCropNumberBoxMaximums_Helper(int width, int height)
+        {
+            this.DispatcherQueue.TryEnqueue(() =>
+            {
+                try
+                {
+                    if (CropTopNumberBox != null && CropBottomNumberBox != null)
+                    {
+                        double prevTop = CropTopNumberBox.Value;
+                        double prevBottom = CropBottomNumberBox.Value;
+                        CropTopNumberBox.Maximum = Math.Max(0, height - 1 - (int)prevBottom);
+                        CropBottomNumberBox.Maximum = Math.Max(0, height - 1 - (int)prevTop);
+                        if (CropTopNumberBox.Value > CropTopNumberBox.Maximum) CropTopNumberBox.Value = CropTopNumberBox.Maximum;
+                        if (CropBottomNumberBox.Value > CropBottomNumberBox.Maximum) CropBottomNumberBox.Value = CropBottomNumberBox.Maximum;
+                    }
+
+                    if (CropLeftNumberBox != null && CropRightNumberBox != null)
+                    {
+                        double prevLeft = CropLeftNumberBox.Value;
+                        double prevRight = CropRightNumberBox.Value;
+                        CropLeftNumberBox.Maximum = Math.Max(0, width - 1 - (int)prevRight);
+                        CropRightNumberBox.Maximum = Math.Max(0, width - 1 - (int)prevLeft);
+                        if (CropLeftNumberBox.Value > CropLeftNumberBox.Maximum) CropLeftNumberBox.Value = CropLeftNumberBox.Maximum;
+                        if (CropRightNumberBox.Value > CropRightNumberBox.Maximum) CropRightNumberBox.Value = CropRightNumberBox.Maximum;
+                    }
+                }
+                catch
+                {
+                }
+            });
+        }
+
+        private void CropEnabledCheckBox_Checked_Helper(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
+        {
+            if (running_state)
+            {
+                return;
+            }
+
+            SetCropControlsEnabled(HasLoadedSourceFile());
+
+            if (CropTopNumberBox != null) cropTop = (int)CropTopNumberBox.Value;
+            if (CropLeftNumberBox != null) cropLeft = (int)CropLeftNumberBox.Value;
+            if (CropRightNumberBox != null) cropRight = (int)CropRightNumberBox.Value;
+            if (CropBottomNumberBox != null) cropBottom = (int)CropBottomNumberBox.Value;
+
+            int width = Math.Max(1, lastPreviewFrameWidth > 0 ? lastPreviewFrameWidth : v_width);
+            int height = Math.Max(1, lastPreviewFrameHeight > 0 ? lastPreviewFrameHeight : v_height);
+            UpdateCropNumberBoxMaximums_Helper(width, height);
+            RedrawCropOverlay();
+        }
+
+        // XAML event wrappers (generated code expects these exact names)
+        private void CropEnabledCheckBox_Checked(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
+        {
+            CropEnabledCheckBox_Checked_Helper(sender, e);
+        }
+
+        private void CropNumberBox_ValueChanged(Microsoft.UI.Xaml.Controls.NumberBox sender, Microsoft.UI.Xaml.Controls.NumberBoxValueChangedEventArgs args)
+        {
+            CropNumberBox_ValueChanged_Helper(sender, args);
+        }
+
+        private void CropNumberBox_ValueChanged_Helper(Microsoft.UI.Xaml.Controls.NumberBox sender, Microsoft.UI.Xaml.Controls.NumberBoxValueChangedEventArgs args)
+        {
+            if (running_state || suppressCropNumberBoxValueChanged)
+            {
+                return;
+            }
+
+            if (CropTopNumberBox != null) cropTop = (int)CropTopNumberBox.Value;
+            if (CropLeftNumberBox != null) cropLeft = (int)CropLeftNumberBox.Value;
+            if (CropRightNumberBox != null) cropRight = (int)CropRightNumberBox.Value;
+            if (CropBottomNumberBox != null) cropBottom = (int)CropBottomNumberBox.Value;
+
+            int width = Math.Max(1, lastPreviewFrameWidth > 0 ? lastPreviewFrameWidth : v_width);
+            int height = Math.Max(1, lastPreviewFrameHeight > 0 ? lastPreviewFrameHeight : v_height);
+            UpdateCropNumberBoxMaximums_Helper(width, height);
+            RedrawCropOverlay();
+        }
+
+        private void ResetCropSettingsForNewSource()
+        {
+            cropTop = 0;
+            cropLeft = 0;
+            cropRight = 0;
+            cropBottom = 0;
+            cropDragEdge = CropDragEdge.None;
+
+            suppressCropNumberBoxValueChanged = true;
+            try
+            {
+                if (CropEnabledCheckBox != null) CropEnabledCheckBox.IsChecked = false;
+                if (CropTopNumberBox != null) CropTopNumberBox.Value = 0;
+                if (CropLeftNumberBox != null) CropLeftNumberBox.Value = 0;
+                if (CropRightNumberBox != null) CropRightNumberBox.Value = 0;
+                if (CropBottomNumberBox != null) CropBottomNumberBox.Value = 0;
+            }
+            finally
+            {
+                suppressCropNumberBoxValueChanged = false;
+            }
+
+            RemoveCropOverlayShapes();
+            SetDrawingCanvasCursor(Microsoft.UI.Input.InputSystemCursorShape.Arrow);
+        }
+
+        private bool TryBeginCropBoundaryDrag(Windows.Foundation.Point point)
+        {
+            cropDragEdge = GetCropBoundaryAtPoint(point);
+            return cropDragEdge != CropDragEdge.None;
+        }
+
+        private CropDragEdge GetCropBoundaryAtPoint(Windows.Foundation.Point point)
+        {
+            if (CropEnabledCheckBox?.IsChecked != true || running_state)
+            {
+                return CropDragEdge.None;
+            }
+
+            int sourceWidth = Math.Max(1, lastPreviewFrameWidth > 0 ? lastPreviewFrameWidth : v_width);
+            int sourceHeight = Math.Max(1, lastPreviewFrameHeight > 0 ? lastPreviewFrameHeight : v_height);
+            double canvasWidth = DrawingCanvas.Width;
+            double canvasHeight = DrawingCanvas.Height;
+            if (canvasWidth <= 0 || canvasHeight <= 0)
+            {
+                return CropDragEdge.None;
+            }
+
+            double scaleX = canvasWidth / sourceWidth;
+            double scaleY = canvasHeight / sourceHeight;
+            double left = cropLeft * scaleX;
+            double top = cropTop * scaleY;
+            double right = canvasWidth - cropRight * scaleX;
+            double bottom = canvasHeight - cropBottom * scaleY;
+            double tolerance = CropBoundaryHitTarget / Math.Max(previewZoomScale, 0.01);
+
+            CropDragEdge nearestEdge = CropDragEdge.None;
+            double nearestDistance = tolerance;
+
+            void Consider(CropDragEdge edge, double distance, bool withinEdge)
+            {
+                if (withinEdge && distance <= nearestDistance)
+                {
+                    nearestEdge = edge;
+                    nearestDistance = distance;
+                }
+            }
+
+            Consider(CropDragEdge.Top, Math.Abs(point.Y - top), point.X >= left - tolerance && point.X <= right + tolerance);
+            Consider(CropDragEdge.Bottom, Math.Abs(point.Y - bottom), point.X >= left - tolerance && point.X <= right + tolerance);
+            Consider(CropDragEdge.Left, Math.Abs(point.X - left), point.Y >= top - tolerance && point.Y <= bottom + tolerance);
+            Consider(CropDragEdge.Right, Math.Abs(point.X - right), point.Y >= top - tolerance && point.Y <= bottom + tolerance);
+
+            return nearestEdge;
+        }
+
+        private void UpdateCropBoundaryCursor(Windows.Foundation.Point point)
+        {
+            CropDragEdge edge = cropDragEdge != CropDragEdge.None ? cropDragEdge : GetCropBoundaryAtPoint(point);
+            Microsoft.UI.Input.InputSystemCursorShape shape = edge switch
+            {
+                CropDragEdge.Top or CropDragEdge.Bottom => Microsoft.UI.Input.InputSystemCursorShape.SizeNorthSouth,
+                CropDragEdge.Left or CropDragEdge.Right => Microsoft.UI.Input.InputSystemCursorShape.SizeWestEast,
+                _ => Microsoft.UI.Input.InputSystemCursorShape.Arrow
+            };
+            SetDrawingCanvasCursor(shape);
+        }
+
+        private void SetDrawingCanvasCursor(Microsoft.UI.Input.InputSystemCursorShape shape)
+        {
+            if (DrawingCanvas is CursorCanvas cursorCanvas)
+            {
+                cursorCanvas.SetCursorShape(shape);
+            }
+        }
+
+        private void UpdateCropBoundaryFromDrag(Windows.Foundation.Point point)
+        {
+            if (cropDragEdge == CropDragEdge.None)
+            {
+                return;
+            }
+
+            int sourceWidth = Math.Max(1, lastPreviewFrameWidth > 0 ? lastPreviewFrameWidth : v_width);
+            int sourceHeight = Math.Max(1, lastPreviewFrameHeight > 0 ? lastPreviewFrameHeight : v_height);
+            double canvasWidth = Math.Max(1.0, DrawingCanvas.Width);
+            double canvasHeight = Math.Max(1.0, DrawingCanvas.Height);
+            double scaleX = canvasWidth / sourceWidth;
+            double scaleY = canvasHeight / sourceHeight;
+
+            switch (cropDragEdge)
+            {
+                case CropDragEdge.Top:
+                    cropTop = Math.Clamp((int)Math.Round(point.Y / scaleY), 0, sourceHeight - 1 - cropBottom);
+                    break;
+                case CropDragEdge.Left:
+                    cropLeft = Math.Clamp((int)Math.Round(point.X / scaleX), 0, sourceWidth - 1 - cropRight);
+                    break;
+                case CropDragEdge.Right:
+                    cropRight = Math.Clamp((int)Math.Round((canvasWidth - point.X) / scaleX), 0, sourceWidth - 1 - cropLeft);
+                    break;
+                case CropDragEdge.Bottom:
+                    cropBottom = Math.Clamp((int)Math.Round((canvasHeight - point.Y) / scaleY), 0, sourceHeight - 1 - cropTop);
+                    break;
+            }
+
+            suppressCropNumberBoxValueChanged = true;
+            try
+            {
+                CropTopNumberBox.Maximum = Math.Max(0, sourceHeight - 1 - cropBottom);
+                CropBottomNumberBox.Maximum = Math.Max(0, sourceHeight - 1 - cropTop);
+                CropLeftNumberBox.Maximum = Math.Max(0, sourceWidth - 1 - cropRight);
+                CropRightNumberBox.Maximum = Math.Max(0, sourceWidth - 1 - cropLeft);
+                CropTopNumberBox.Value = cropTop;
+                CropLeftNumberBox.Value = cropLeft;
+                CropRightNumberBox.Value = cropRight;
+                CropBottomNumberBox.Value = cropBottom;
+            }
+            finally
+            {
+                suppressCropNumberBoxValueChanged = false;
+            }
+
+            RedrawCropOverlay();
+        }
+
+        private void RemoveCropOverlayShapes()
+        {
+            var overlays = DrawingCanvas.Children
+                .OfType<FrameworkElement>()
+                .Where(x => string.Equals(x.Tag as string, CropOverlayTag, StringComparison.Ordinal))
+                .ToList();
+
+            foreach (var overlay in overlays)
+            {
+                DrawingCanvas.Children.Remove(overlay);
+            }
+        }
+
+        private void AddCropOverlayRect(double x, double y, double w, double h, Brush fill)
+        {
+            if (w <= 0 || h <= 0)
+            {
+                return;
+            }
+
+            var rect = new Rectangle
+            {
+                Width = w,
+                Height = h,
+                Fill = fill,
+                IsHitTestVisible = false,
+                Tag = CropOverlayTag
+            };
+
+            Canvas.SetLeft(rect, x);
+            Canvas.SetTop(rect, y);
+            DrawingCanvas.Children.Add(rect);
+        }
+
+        private void RedrawCropOverlay()
+        {
+            if (DrawingCanvas == null)
+            {
+                return;
+            }
+
+            RemoveCropOverlayShapes();
+
+            if (running_state)
+            {
+                return;
+            }
+
+            if (CropEnabledCheckBox?.IsChecked != true)
+            {
+                return;
+            }
+
+            int sourceWidth = Math.Max(1, lastPreviewFrameWidth > 0 ? lastPreviewFrameWidth : v_width);
+            int sourceHeight = Math.Max(1, lastPreviewFrameHeight > 0 ? lastPreviewFrameHeight : v_height);
+
+            int top = Math.Clamp(cropTop, 0, sourceHeight - 1);
+            int left = Math.Clamp(cropLeft, 0, sourceWidth - 1);
+            int right = Math.Clamp(cropRight, 0, sourceWidth - 1);
+            int bottom = Math.Clamp(cropBottom, 0, sourceHeight - 1);
+
+            int keepWidthPx = sourceWidth - left - right;
+            int keepHeightPx = sourceHeight - top - bottom;
+            if (keepWidthPx <= 0 || keepHeightPx <= 0)
+            {
+                return;
+            }
+
+            double canvasWidth = DrawingCanvas.Width;
+            double canvasHeight = DrawingCanvas.Height;
+            if (canvasWidth <= 0 || canvasHeight <= 0)
+            {
+                return;
+            }
+
+            double scaleX = canvasWidth / sourceWidth;
+            double scaleY = canvasHeight / sourceHeight;
+
+            double keepX = left * scaleX;
+            double keepY = top * scaleY;
+            double keepWidth = keepWidthPx * scaleX;
+            double keepHeight = keepHeightPx * scaleY;
+
+            var croppedFill = new SolidColorBrush(Color.FromArgb(72, 255, 255, 0));
+            var boundaryStroke = new SolidColorBrush(Colors.Yellow);
+
+            AddCropOverlayRect(0, 0, canvasWidth, keepY, croppedFill);
+            AddCropOverlayRect(0, keepY, keepX, keepHeight, croppedFill);
+            AddCropOverlayRect(keepX + keepWidth, keepY, canvasWidth - (keepX + keepWidth), keepHeight, croppedFill);
+            AddCropOverlayRect(0, keepY + keepHeight, canvasWidth, canvasHeight - (keepY + keepHeight), croppedFill);
+
+            var border = new Rectangle
+            {
+                Width = keepWidth,
+                Height = keepHeight,
+                Stroke = boundaryStroke,
+                StrokeThickness = 2,
+                Fill = new SolidColorBrush(Colors.Transparent),
+                IsHitTestVisible = false,
+                Tag = CropOverlayTag
+            };
+            Canvas.SetLeft(border, keepX);
+            Canvas.SetTop(border, keepY);
+            DrawingCanvas.Children.Add(border);
+        }
+
+        private void SetCropControlsEnabled(bool enabled)
+        {
+            bool cropChecked = CropEnabledCheckBox?.IsChecked == true;
+            if (CropEnabledCheckBox != null) CropEnabledCheckBox.IsEnabled = enabled;
+            bool canEditNumbers = enabled && cropChecked;
+            if (CropTopNumberBox != null) CropTopNumberBox.IsEnabled = canEditNumbers;
+            if (CropLeftNumberBox != null) CropLeftNumberBox.IsEnabled = canEditNumbers;
+            if (CropRightNumberBox != null) CropRightNumberBox.IsEnabled = canEditNumbers;
+            if (CropBottomNumberBox != null) CropBottomNumberBox.IsEnabled = canEditNumbers;
+        }
+
+        private bool HasLoadedSourceFile()
+        {
+            return !string.IsNullOrWhiteSpace(v_file_path) &&
+                   !string.Equals(PickAFileOutputTextBlock?.Text, "Operation cancelled.", StringComparison.OrdinalIgnoreCase);
+        }
 
         private static void ApplyUiCulture(bool useJapanese)
         {
@@ -162,6 +572,11 @@ namespace WoLNamesBlackedOut
         private byte[]? lastPreviewFrameBgra;
         private int lastPreviewFrameWidth;
         private int lastPreviewFrameHeight;
+        private bool forceExitScheduled = false;
+        private bool processingPreviewEnabled = false;
+        private bool processingPreviewUpdateBusy = false;
+        private long processingPreviewLastUpdateMs = 0;
+        private int processingPreviewFrameOffset = 0;
 
         // Copyright overlay interaction state
         private int copyrightOffsetX = 0;
@@ -170,6 +585,19 @@ namespace WoLNamesBlackedOut
         private double copyrightDragStartX = 0;
         private double copyrightDragStartY = 0;
         private double copyrightZoomScale = 1.0;
+        private const double PreviewMinZoomScale = 0.25;
+        private const double PreviewMaxZoomScale = 8.0;
+        private double previewZoomScale = 1.0;
+        private double previewPanOffsetX = 0.0;
+        private double previewPanOffsetY = 0.0;
+        private bool previewPanning = false;
+        private double previewPanStartX = 0.0;
+        private double previewPanStartY = 0.0;
+        private double previewPanOriginX = 0.0;
+        private double previewPanOriginY = 0.0;
+        private ScaleTransform? previewScaleTransform;
+        private TranslateTransform? previewTranslateTransform;
+        private RectangleGeometry? previewViewportClipGeometry;
         private string? copyrightImagePath = null;
         private static readonly TimeSpan ProgressIndicatorLeadTime = TimeSpan.FromMilliseconds(120);
 
@@ -181,6 +609,56 @@ namespace WoLNamesBlackedOut
                 lastPreviewFrameWidth = 0;
                 lastPreviewFrameHeight = 0;
             }
+        }
+
+        private bool UpdateImagePreview(FrameProcessor.PreviewFrameResult frame, bool removeRectangles = true)
+        {
+            if (frame.Result != 0 || frame.Width <= 0 || frame.Height <= 0 || isWindowClosing)
+            {
+                return false;
+            }
+
+            int required = checked(frame.Width * frame.Height * 4);
+            if (frame.Bgra.Length < required)
+            {
+                return false;
+            }
+
+            var stopwatch = Stopwatch.StartNew();
+            if (previewBitmap == null || previewBitmap.PixelWidth != frame.Width || previewBitmap.PixelHeight != frame.Height)
+            {
+                previewBitmap = new WriteableBitmap(frame.Width, frame.Height);
+                image_preview.Source = previewBitmap;
+            }
+
+            using (Stream pixelStream = previewBitmap.PixelBuffer.AsStream())
+            {
+                pixelStream.Position = 0;
+                pixelStream.Write(frame.Bgra, 0, required);
+            }
+            previewBitmap.Invalidate();
+
+            lock (previewFrameCacheLock)
+            {
+                lastPreviewFrameBgra = new byte[required];
+                Buffer.BlockCopy(frame.Bgra, 0, lastPreviewFrameBgra, 0, required);
+                lastPreviewFrameWidth = frame.Width;
+                lastPreviewFrameHeight = frame.Height;
+            }
+
+            v_width = frame.Width;
+            v_height = frame.Height;
+            UpdateCropNumberBoxMaximums_Helper(frame.Width, frame.Height);
+            int logicalWidth = ConfigurePreviewViewport(frame.Width, frame.Height);
+            TryResizeAppWindow(logicalWidth, 900);
+
+            if (removeRectangles)
+            {
+                RemoveAllRectangles();
+            }
+
+            Debug.WriteLine($"[PreviewTiming] writeable_bitmap_update_ms={stopwatch.Elapsed.TotalMilliseconds:F3} end_to_display_ms={frame.TotalMilliseconds + stopwatch.Elapsed.TotalMilliseconds:F3}");
+            return true;
         }
 
         private async Task WaitForProgressIndicatorAsync()
@@ -209,20 +687,16 @@ namespace WoLNamesBlackedOut
 
             imagePreviewRefreshBusy = true;
             SafeSetProgressIndeterminate(true);
-
-            string tempDirectory = System.IO.Path.GetTempPath();
-            string fileName = $"tmp_wol_{DateTime.Now:yyyyMMddHHmmssfff}.png";
-            string outputPath = System.IO.Path.Combine(tempDirectory, fileName);
+            BeginPreviewStatusFeedback(GetLocalizedString("Runtime.PreviewInitializing", "Preparing preview..."));
+            bool previewSucceeded = false;
 
             try
             {
-                File.Copy(v_file_path, outputPath, true);
-
                 RectInfo[] rectInfos = BuildRectInfos();
                 var (nameColor, fixedColor) = BuildMaskColors();
 
-                int result = await FrameProcessor.Runpreview_apiAsync(
-                    outputPath,
+                FrameProcessor.PreviewFrameResult result = await FrameProcessor.Runpreview_apiAsync(
+                    v_file_path,
                     rectInfos,
                     rectInfos.Length,
                     nameColor,
@@ -233,38 +707,25 @@ namespace WoLNamesBlackedOut
                     (int)BlackedOutSlideBar.Value,
                     (int)FixedFrameSlideBar.Value,
                     GetYoloThreshold(),
-                    copyrightImagePath ?? string.Empty);
+                    copyrightImagePath ?? string.Empty,
+                    copyrightOffsetX,
+                    copyrightOffsetY,
+                    (float)copyrightZoomScale);
 
-                if (result != 0 || isWindowClosing)
+                if (result.Result != 0 || isWindowClosing)
                 {
                     return;
                 }
 
-                last_preview_image = outputPath;
-                var bitmapImage = new BitmapImage(new Uri(outputPath));
-                bitmapImage.ImageOpened += (s, ev) =>
-                {
-                    if (isWindowClosing)
-                    {
-                        return;
-                    }
-
-                    var originalHeight = bitmapImage.PixelHeight;
-                    scaleFactor = image_preview.Height / originalHeight;
-
-                    int logicalWidth = 800 + (int)(bitmapImage.PixelWidth * scaleFactor) - 280;
-                    int logicalHeight = 850;
-                    TryResizeAppWindow(logicalWidth, logicalHeight);
-
-                    image_preview.Source = bitmapImage;
-                    RemoveAllRectangles();
-                };
-
-                image_preview.Source = bitmapImage;
+                last_preview_image = string.Empty;
+                previewSucceeded = UpdateImagePreview(result);
                 SaveImageButton.IsEnabled = true;
             }
             finally
             {
+                EndPreviewStatusFeedback(previewSucceeded
+                    ? GetLocalizedString("Runtime.PreviewReady", "Preview ready")
+                    : GetLocalizedString("Runtime.PreviewInitFailed", "Preview initialization failed"));
                 imagePreviewRefreshBusy = false;
                 SafeSetProgressIndeterminate(false);
             }
@@ -343,7 +804,23 @@ namespace WoLNamesBlackedOut
 
             try
             {
-                StopRealtimePreviewSession(skipNativeClose: true);
+                cancel_state = true;
+                cancel_pending_state = true;
+                SafeCancelFfmpegProcesses();
+            }
+            catch
+            {
+            }
+
+            previewPanning = false;
+            copyrightDragging = false;
+            isDrawing = false;
+            ReleasePreviewPointerCapturesSafe();
+
+            try
+            {
+                StopRealtimePreviewSession(skipNativeClose: false);
+                FrameProcessor.PreviewCloseSessionSafe();
             }
             catch
             {
@@ -355,6 +832,22 @@ namespace WoLNamesBlackedOut
             }
             catch
             {
+            }
+
+            if (!forceExitScheduled)
+            {
+                forceExitScheduled = true;
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await Task.Delay(5000).ConfigureAwait(false);
+                        Environment.Exit(0);
+                    }
+                    catch
+                    {
+                    }
+                });
             }
         }
 
@@ -667,8 +1160,8 @@ namespace WoLNamesBlackedOut
                 double dpiScale = WindowHelper.GetWindowDpiScale(this);
 
                 // 論理サイズをDPIスケールで変換
-                int logicalWidth = 850;
-                int logicalHeight = 850;
+                int logicalWidth = 900;
+                int logicalHeight = 900;
                 int physicalWidth = (int)(logicalWidth * dpiScale);
                 int physicalHeight = (int)(logicalHeight * dpiScale);
 
@@ -695,11 +1188,13 @@ namespace WoLNamesBlackedOut
 
             RootGrid.KeyDown += MainWindow_KeyDown;
             RootGrid.Loaded += (_, __) => RootGrid.Focus(FocusState.Programmatic);
+            InitializePreviewCanvasTransform();
 
             StartupTrace("ctor:after event hooks");
 
             UIControl_enable_false();
             PickAFileButton.IsEnabled = true;
+            SetCropControlsEnabled(false);
 
 
             // LocalSettings から値を読み込む
@@ -729,6 +1224,26 @@ namespace WoLNamesBlackedOut
                 if (bool.TryParse(addCopyrightValue.ToString(), out bool isChecked))
                 {
                     Add_Copyright.IsChecked = isChecked;
+                }
+            }
+
+            if (localSettings != null && localSettings.Values.TryGetValue("ProcessingPreviewEnabled", out object processingPreviewEnabledValue))
+            {
+                if (bool.TryParse(processingPreviewEnabledValue?.ToString(), out bool processingPreviewEnabledChecked))
+                {
+                    ProcessingPreviewEnabledCheckBox.IsChecked = processingPreviewEnabledChecked;
+                }
+            }
+
+            if (localSettings != null && localSettings.Values.TryGetValue("ProcessingPreviewIntervalSeconds", out object processingPreviewIntervalValue))
+            {
+                if (double.TryParse(processingPreviewIntervalValue?.ToString(), out double processingPreviewIntervalSeconds))
+                {
+                    var processingPreviewIntervalSlider = GetProcessingPreviewIntervalSlider();
+                    if (processingPreviewIntervalSlider != null)
+                    {
+                        processingPreviewIntervalSlider.Value = Math.Clamp(processingPreviewIntervalSeconds, 0.2, 3.0);
+                    }
                 }
             }
 
@@ -854,6 +1369,15 @@ namespace WoLNamesBlackedOut
             FixedFrameSlideBar.ValueChanged += PreviewMaskSetting_ValueChanged;
             Add_Copyright.Checked += Add_Copyright_CheckedChanged;
             Add_Copyright.Unchecked += Add_Copyright_CheckedChanged;
+            if (CropEnabledCheckBox != null)
+            {
+                CropEnabledCheckBox.Checked += CropEnabledCheckBox_Checked_Helper;
+                CropEnabledCheckBox.Unchecked += CropEnabledCheckBox_Checked_Helper;
+            }
+            if (CropTopNumberBox != null) CropTopNumberBox.ValueChanged += CropNumberBox_ValueChanged_Helper;
+            if (CropLeftNumberBox != null) CropLeftNumberBox.ValueChanged += CropNumberBox_ValueChanged_Helper;
+            if (CropRightNumberBox != null) CropRightNumberBox.ValueChanged += CropNumberBox_ValueChanged_Helper;
+            if (CropBottomNumberBox != null) CropBottomNumberBox.ValueChanged += CropNumberBox_ValueChanged_Helper;
 
             string dllDirectory = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory);
             Environment.CurrentDirectory = dllDirectory;
@@ -917,9 +1441,268 @@ namespace WoLNamesBlackedOut
             StartupTrace("ctor:end");
         }
 
+        private void InitializePreviewCanvasTransform()
+        {
+            previewScaleTransform = new ScaleTransform { ScaleX = 1.0, ScaleY = 1.0 };
+            previewTranslateTransform = new TranslateTransform { X = 0.0, Y = 0.0 };
+            var transformGroup = new TransformGroup();
+            transformGroup.Children.Add(previewScaleTransform);
+            transformGroup.Children.Add(previewTranslateTransform);
+            DrawingCanvas.RenderTransformOrigin = new Windows.Foundation.Point(0, 0);
+            DrawingCanvas.RenderTransform = transformGroup;
+            previewViewportClipGeometry = new RectangleGeometry();
+            PreviewContainer.Clip = previewViewportClipGeometry;
+            UpdatePreviewViewportClip();
+            ApplyPreviewCanvasTransform();
+        }
+
+        private void PreviewContainer_SizeChanged(object sender, SizeChangedEventArgs e)
+        {
+            if (isWindowClosing)
+            {
+                return;
+            }
+
+            UpdatePreviewViewportClip();
+        }
+
+        private void UpdatePreviewViewportClip(double? width = null, double? height = null)
+        {
+            if (isWindowClosing)
+            {
+                return;
+            }
+
+            if (previewViewportClipGeometry == null)
+            {
+                return;
+            }
+
+            double clipWidth = width ?? image_preview.ActualWidth;
+            if (clipWidth <= 0 || double.IsNaN(clipWidth) || double.IsInfinity(clipWidth))
+            {
+                clipWidth = image_preview.Width;
+            }
+
+            double clipHeight = height ?? image_preview.ActualHeight;
+            if (clipHeight <= 0 || double.IsNaN(clipHeight) || double.IsInfinity(clipHeight))
+            {
+                clipHeight = image_preview.Height;
+            }
+
+            if (clipWidth <= 0 || double.IsNaN(clipWidth) || double.IsInfinity(clipWidth))
+            {
+                clipWidth = DrawingCanvas.Width;
+            }
+
+            if (clipHeight <= 0 || double.IsNaN(clipHeight) || double.IsInfinity(clipHeight))
+            {
+                clipHeight = DrawingCanvas.Height;
+            }
+
+            if (double.IsNaN(clipWidth) || clipWidth < 0)
+            {
+                clipWidth = 0;
+            }
+
+            if (double.IsNaN(clipHeight) || clipHeight < 0)
+            {
+                clipHeight = 0;
+            }
+
+            try
+            {
+                previewViewportClipGeometry.Rect = new Windows.Foundation.Rect(0, 0, clipWidth, clipHeight);
+            }
+            catch (ArgumentException)
+            {
+                isWindowClosing = true;
+            }
+            catch (COMException)
+            {
+                isWindowClosing = true;
+            }
+        }
+
+        private double GetPreviewBaseHeight()
+        {
+            double previewHeight = image_preview.Height;
+            if (previewHeight <= 0 || double.IsNaN(previewHeight) || double.IsInfinity(previewHeight))
+            {
+                previewHeight = image_preview.ActualHeight;
+            }
+
+            if (previewHeight <= 0 || double.IsNaN(previewHeight) || double.IsInfinity(previewHeight))
+            {
+                previewHeight = 576;
+            }
+
+            return previewHeight;
+        }
+
+        private int ConfigurePreviewViewport(double sourcePixelWidth, double sourcePixelHeight)
+        {
+            if (isWindowClosing)
+            {
+                return 800;
+            }
+
+            if (sourcePixelWidth <= 0 || sourcePixelHeight <= 0)
+            {
+                return 800;
+            }
+
+            double previewHeight = GetPreviewBaseHeight();
+            scaleFactor = previewHeight / sourcePixelHeight;
+            if (scaleFactor <= 0 || double.IsNaN(scaleFactor) || double.IsInfinity(scaleFactor))
+            {
+                scaleFactor = 1.0;
+            }
+
+            double previewWidth = Math.Max(1.0, sourcePixelWidth * scaleFactor);
+
+            image_preview.Width = previewWidth;
+            image_preview.Height = previewHeight;
+            DrawingCanvas.Width = previewWidth;
+            DrawingCanvas.Height = previewHeight;
+            PreviewContainer.Width = previewWidth;
+            PreviewContainer.Height = previewHeight;
+            UpdatePreviewViewportClip(previewWidth, previewHeight);
+            RedrawCropOverlay();
+
+            return 800 + (int)Math.Round(previewWidth) - 280;
+        }
+
+        private void ApplyPreviewCanvasTransform()
+        {
+            double safeZoom = previewZoomScale;
+            if (safeZoom <= 0 || double.IsNaN(safeZoom) || double.IsInfinity(safeZoom))
+            {
+                safeZoom = 1.0;
+                previewZoomScale = 1.0;
+            }
+
+            double safePanX = previewPanOffsetX;
+            if (double.IsNaN(safePanX) || double.IsInfinity(safePanX))
+            {
+                safePanX = 0.0;
+                previewPanOffsetX = 0.0;
+            }
+
+            double safePanY = previewPanOffsetY;
+            if (double.IsNaN(safePanY) || double.IsInfinity(safePanY))
+            {
+                safePanY = 0.0;
+                previewPanOffsetY = 0.0;
+            }
+
+            try
+            {
+                if (previewScaleTransform != null)
+                {
+                    previewScaleTransform.ScaleX = safeZoom;
+                    previewScaleTransform.ScaleY = safeZoom;
+                }
+
+                if (previewTranslateTransform != null)
+                {
+                    previewTranslateTransform.X = safePanX;
+                    previewTranslateTransform.Y = safePanY;
+                }
+            }
+            catch (ArgumentException)
+            {
+                isWindowClosing = true;
+            }
+            catch (COMException)
+            {
+                isWindowClosing = true;
+            }
+        }
+
+        private void ReleasePreviewPointerCapturesSafe()
+        {
+            cropDragEdge = CropDragEdge.None;
+            if (DrawingCanvas == null)
+            {
+                return;
+            }
+
+            try
+            {
+                DrawingCanvas.ReleasePointerCaptures();
+            }
+            catch (ArgumentException)
+            {
+            }
+            catch (COMException)
+            {
+            }
+        }
+
+        private void ResetPreviewViewportTransform()
+        {
+            previewPanning = false;
+            previewZoomScale = 1.0;
+            previewPanOffsetX = 0.0;
+            previewPanOffsetY = 0.0;
+            previewPanStartX = 0.0;
+            previewPanStartY = 0.0;
+            previewPanOriginX = 0.0;
+            previewPanOriginY = 0.0;
+            ApplyPreviewCanvasTransform();
+        }
+
+        private Windows.Foundation.Point GetPreviewContainerPoint(PointerRoutedEventArgs e)
+        {
+            return e.GetCurrentPoint(PreviewContainer).Position;
+        }
+
+        private Windows.Foundation.Point GetPreviewCanvasPoint(PointerRoutedEventArgs e)
+        {
+            var containerPoint = GetPreviewContainerPoint(e);
+            double scale = previewZoomScale;
+            if (scale <= 0 || double.IsNaN(scale) || double.IsInfinity(scale))
+            {
+                scale = 1.0;
+            }
+
+            return new Windows.Foundation.Point(
+                (containerPoint.X - previewPanOffsetX) / scale,
+                (containerPoint.Y - previewPanOffsetY) / scale);
+        }
+
+        private void ZoomPreviewAtPoint(Windows.Foundation.Point containerPoint, double zoomFactor)
+        {
+            if (zoomFactor <= 0 || double.IsNaN(zoomFactor) || double.IsInfinity(zoomFactor))
+            {
+                return;
+            }
+
+            double oldScale = previewZoomScale;
+            double newScale = Math.Clamp(oldScale * zoomFactor, PreviewMinZoomScale, PreviewMaxZoomScale);
+            if (Math.Abs(newScale - oldScale) < 0.0001)
+            {
+                return;
+            }
+
+            double logicalX = (containerPoint.X - previewPanOffsetX) / oldScale;
+            double logicalY = (containerPoint.Y - previewPanOffsetY) / oldScale;
+
+            previewZoomScale = newScale;
+            previewPanOffsetX = containerPoint.X - (logicalX * newScale);
+            previewPanOffsetY = containerPoint.Y - (logicalY * newScale);
+            ApplyPreviewCanvasTransform();
+        }
+
         private void TryResizeAppWindow(int logicalWidth, int logicalHeight)
         {
             if (isWindowClosing)
+            {
+                return;
+            }
+
+            if (autoResizedForCurrentSource)
             {
                 return;
             }
@@ -940,6 +1723,7 @@ namespace WoLNamesBlackedOut
                 };
 
                 this.AppWindow.Resize(targetSize);
+                autoResizedForCurrentSource = true;
             }
             catch (ArgumentException ex)
             {
@@ -1117,6 +1901,19 @@ namespace WoLNamesBlackedOut
             }
 
             BeginWindowClosing();
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(2000).ConfigureAwait(false);
+                    Environment.Exit(0);
+                }
+                catch
+                {
+                }
+            });
+
             try
             {
                 Application.Current.Exit();
@@ -1126,18 +1923,10 @@ namespace WoLNamesBlackedOut
                 Debug.WriteLine($"Application.Current.Exit failed: {ex.Message}");
                 try
                 {
-                    this.Close();
+                    Environment.Exit(0);
                 }
-                catch (Exception ex2)
+                catch
                 {
-                    Debug.WriteLine($"Window.Close failed: {ex2.Message}");
-                    try
-                    {
-                        Environment.Exit(0);
-                    }
-                    catch
-                    {
-                    }
                 }
             }
         }
@@ -1163,6 +1952,8 @@ namespace WoLNamesBlackedOut
                 try { localSettings.Values["DeviceName"] = ""; } catch { }
                 try { localSettings.Values["DebugLogExport"] = DebugLogExport?.IsChecked == true; } catch { }
                 try { localSettings.Values["YoloThresholdSlider"] = YoloThresholdSlider?.Value ?? 0.0; } catch { }
+                try { localSettings.Values["ProcessingPreviewEnabled"] = ProcessingPreviewEnabledCheckBox?.IsChecked == true; } catch { }
+                try { localSettings.Values["ProcessingPreviewIntervalSeconds"] = GetProcessingPreviewIntervalSlider()?.Value ?? 1.0; } catch { }
                 try { localSettings.Values["ExcludeByNameEnabled"] = excludeByNameEnabled; } catch { }
                 try { localSettings.Values["OcrExpandPixels"] = ocrExpandPixels; } catch { }
                 try { localSettings.Values["OcrMaxRoisPerFrame"] = ocrMaxRoisPerFrame; } catch { }
@@ -1265,6 +2056,136 @@ namespace WoLNamesBlackedOut
                 ETA.Text = eta.ToString("F2");
                 ProgressBar.Value = percentage * 100;
             }
+
+            TryScheduleProcessingPreviewUpdate();
+        }
+
+        private void TryScheduleProcessingPreviewUpdate()
+        {
+            if (isWindowClosing ||
+                !running_state ||
+                !IsProcessingPreviewRequested() ||
+                !processingPreviewEnabled ||
+                !previewSessionOpen ||
+                processingPreviewUpdateBusy ||
+                previewTickBusy ||
+                stopwatch == null)
+            {
+                return;
+            }
+
+            long elapsedMs = stopwatch.ElapsedMilliseconds;
+            int intervalMs = GetProcessingPreviewIntervalMilliseconds();
+            if (elapsedMs - processingPreviewLastUpdateMs < intervalMs)
+            {
+                return;
+            }
+
+            processingPreviewLastUpdateMs = elapsedMs;
+
+            _ = UpdateProcessingPreviewFrameAsync();
+        }
+
+        private async Task UpdateProcessingPreviewFrameAsync()
+        {
+            if (processingPreviewUpdateBusy || isWindowClosing || !processingPreviewEnabled || !previewSessionOpen)
+            {
+                return;
+            }
+
+            processingPreviewUpdateBusy = true;
+            try
+            {
+                int expectedWidth = Math.Max(1, v_width);
+                int expectedHeight = Math.Max(1, v_height);
+                byte[] bgra = new byte[expectedWidth * expectedHeight * 4];
+
+                var frameResult = await Task.Run(() =>
+                {
+                    int result = FrameProcessor.TryGetLatestProcessedPreviewFrameBuffer(bgra, out int outWidth, out int outHeight, out int outFrameIndex);
+                    return (result, outWidth, outHeight, outFrameIndex);
+                });
+
+                if (isWindowClosing || !processingPreviewEnabled)
+                {
+                    return;
+                }
+
+                if (frameResult.result != 0 || frameResult.outWidth <= 0 || frameResult.outHeight <= 0)
+                {
+                    return;
+                }
+
+                int outWidth = frameResult.outWidth;
+                int outHeight = frameResult.outHeight;
+                int outFrameIndex = frameResult.outFrameIndex;
+                int required = outWidth * outHeight * 4;
+                if (required <= 0)
+                {
+                    return;
+                }
+
+                if (bgra.Length < required)
+                {
+                    bgra = new byte[required];
+                    int retry = FrameProcessor.TryGetLatestProcessedPreviewFrameBuffer(bgra, out outWidth, out outHeight, out outFrameIndex);
+                    if (retry != 0 || outWidth <= 0 || outHeight <= 0)
+                    {
+                        return;
+                    }
+                    required = outWidth * outHeight * 4;
+                }
+
+                lock (previewFrameCacheLock)
+                {
+                    lastPreviewFrameBgra = new byte[required];
+                    Buffer.BlockCopy(bgra, 0, lastPreviewFrameBgra, 0, required);
+                    lastPreviewFrameWidth = outWidth;
+                    lastPreviewFrameHeight = outHeight;
+                }
+
+                if (previewBitmap == null || previewBitmap.PixelWidth != outWidth || previewBitmap.PixelHeight != outHeight)
+                {
+                    previewBitmap = new WriteableBitmap(outWidth, outHeight);
+                    image_preview.Source = previewBitmap;
+                    previewLayoutInitialized = false;
+                    // update crop controls maximums for this size
+                    UpdateCropNumberBoxMaximums_Helper(outWidth, outHeight);
+                }
+
+                if (!previewLayoutInitialized)
+                {
+                    int logicalWidth = ConfigurePreviewViewport(outWidth, outHeight);
+                    int logicalHeight = 900;
+                    TryResizeAppWindow(logicalWidth, logicalHeight);
+                    previewLayoutInitialized = true;
+                }
+
+                using (var pixelStream = previewBitmap.PixelBuffer.AsStream())
+                {
+                    pixelStream.Position = 0;
+                    pixelStream.Write(bgra, 0, required);
+                }
+                previewBitmap.Invalidate();
+
+                if (outFrameIndex >= 0)
+                {
+                    int fpsValue = Math.Max(1, v_fps);
+                    double sliderSeconds = outFrameIndex / (double)fpsValue;
+                    double sliderValue = Math.Clamp(sliderSeconds, FrameSlideBar.Minimum, FrameSlideBar.Maximum);
+                    suppressFrameSliderValueChanged = true;
+                    FrameSlideBar.Value = sliderValue;
+                    suppressFrameSliderValueChanged = false;
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Processing preview update failed: {ex.Message}");
+            }
+            finally
+            {
+                processingPreviewUpdateBusy = false;
+            }
         }
         private async void RootGrid_Drop(object sender, DragEventArgs e)
         {
@@ -1304,7 +2225,10 @@ namespace WoLNamesBlackedOut
         {
             UIControl_enable_false();
             running_state = true;
+            autoResizedForCurrentSource = false;
+            RemoveCropOverlayShapes();
             StopRealtimePreviewSession();
+            ResetPreviewViewportTransform();
             suppressPreviewToggleEvent = true;
             PreviewButton.IsChecked = false;
             suppressPreviewToggleEvent = false;
@@ -1315,7 +2239,6 @@ namespace WoLNamesBlackedOut
             copyrightOffsetX = 0;
             copyrightOffsetY = 0;
             copyrightZoomScale = 1.0;
-            copyrightImagePath = null;
             ClearPreviewFrameCache();
 
             PickAFileOutputTextBlock.Text = "";
@@ -1325,9 +2248,12 @@ namespace WoLNamesBlackedOut
                 PickAFileOutputTextBlock.Text = "Operation cancelled.";
                 SafeSetProgressIndeterminate(false);
                 UIControl_enable_true();
+                SetCropControlsEnabled(false);
                 running_state = false;
                 return;
             }
+
+            ResetCropSettingsForNewSource();
 
             var fileExtension = file.FileType.ToLower();
             bool isImageFile = fileExtension == ".jpg" || fileExtension == ".jpeg" || fileExtension == ".png";
@@ -1343,69 +2269,34 @@ namespace WoLNamesBlackedOut
 
             if (isImageFile)
             {
-                string tempDirectory = System.IO.Path.GetTempPath();
-                string fileName = $"tmp_wol_{DateTime.Now:yyyyMMddHHmmssfff}.png";
-                string outputPath = System.IO.Path.Combine(tempDirectory, fileName);
+                RectInfo[] rectInfos = BuildRectInfos();
+                var (nameColor, fixedColor) = BuildMaskColors();
 
-                File.Copy(v_file_path, outputPath, true);
-
-                RectInfo[] rectInfos = savedRects.Select(rect => new RectInfo
+                string resolvedCopyrightPath = ResolveActiveCopyrightPath();
+                BeginPreviewStatusFeedback(GetLocalizedString("Runtime.PreviewInitializing", "Preparing preview..."));
+                bool previewSucceeded = false;
+                try
                 {
-                    x = (int)rect.X,
-                    y = (int)rect.Y,
-                    width = (int)rect.Width,
-                    height = (int)rect.Height
-                }).ToArray();
+                    FrameProcessor.PreviewFrameResult result = await FrameProcessor.Runpreview_apiAsync(
+                        v_file_path, rectInfos, rectInfos.Length, nameColor, fixedColor,
+                        Add_Copyright.IsChecked == true, GetComboText(BlackedOut_ComboBox, "Solid"), GetComboText(FixedFrame_ComboBox, "Solid"),
+                        (int)BlackedOutSlideBar.Value, (int)FixedFrameSlideBar.Value, GetYoloThreshold(), resolvedCopyrightPath,
+                        copyrightOffsetX, copyrightOffsetY, (float)copyrightZoomScale);
 
-                SolidColorBrush BlackedOut_color_icon_brush = (SolidColorBrush)BlackedOut_color_icon.Foreground;
-                Color BlackedOut_color_icon_color = BlackedOut_color_icon_brush.Color;
-                ColorInfo BlackedOut_color_icon_color_info = new ColorInfo
-                {
-                    r = BlackedOut_color_icon_color.R,
-                    g = BlackedOut_color_icon_color.G,
-                    b = BlackedOut_color_icon_color.B
-                };
-
-                SolidColorBrush FixedFrame_color_icon_brush = (SolidColorBrush)FixedFrame_color_icon.Foreground;
-                Color FixedFrame_color_icon_color = FixedFrame_color_icon_brush.Color;
-                ColorInfo FixedFrame_color_icon_color_Info = new ColorInfo
-                {
-                    r = FixedFrame_color_icon_color.R,
-                    g = FixedFrame_color_icon_color.G,
-                    b = FixedFrame_color_icon_color.B
-                };
-
-                await FrameProcessor.Runpreview_apiAsync(outputPath, rectInfos, rectInfos.Length, BlackedOut_color_icon_color_info, FixedFrame_color_icon_color_Info, Add_Copyright.IsChecked.Value, GetComboText(BlackedOut_ComboBox, "Solid"), GetComboText(FixedFrame_ComboBox, "Solid"), (int)BlackedOutSlideBar.Value, (int)FixedFrameSlideBar.Value, GetYoloThreshold(), copyrightImagePath ?? string.Empty);
-
-                last_preview_image = outputPath;
-                using (var stream = await file.OpenStreamForReadAsync())
-                {
-                    var bitmapImage = new BitmapImage(new Uri(outputPath));
-                    bitmapImage.ImageOpened += (s, ev) =>
-                    {
-                        if (isWindowClosing)
-                        {
-                            return;
-                        }
-
-                        var originalHeight = bitmapImage.PixelHeight;
-                        scaleFactor = image_preview.Height / originalHeight;
-
-                        // 論理サイズをDPIスケールで変換
-                        int logicalWidth = 800 + (int)(bitmapImage.PixelWidth * scaleFactor) - 280;
-                        int logicalHeight = 850;
-                        TryResizeAppWindow(logicalWidth, logicalHeight);
-
-
-                        image_preview.Source = bitmapImage;
-                        SafeSetProgressIndeterminate(false);
-                        UIControl_enable_true();
-                        running_state = false;
-                        RemoveAllRectangles();
-                    };
-                    image_preview.Source = bitmapImage;
-                    SaveImageButton.IsEnabled = true;
+                    last_preview_image = string.Empty;
+                    previewSucceeded = UpdateImagePreview(result);
                 }
+                finally
+                {
+                    EndPreviewStatusFeedback(previewSucceeded
+                        ? GetLocalizedString("Runtime.PreviewReady", "Preview ready")
+                        : GetLocalizedString("Runtime.PreviewInitFailed", "Preview initialization failed"));
+                }
+
+                SafeSetProgressIndeterminate(false);
+                UIControl_enable_true();
+                running_state = false;
+                SaveImageButton.IsEnabled = true;
             }
             else if (fileExtension == ".mp4")
             {
@@ -1604,20 +2495,13 @@ namespace WoLNamesBlackedOut
                     previewBitmap = new WriteableBitmap(frameResult.outWidth, frameResult.outHeight);
                     image_preview.Source = previewBitmap;
                     previewLayoutInitialized = false;
+                    UpdateCropNumberBoxMaximums_Helper(frameResult.outWidth, frameResult.outHeight);
                 }
 
                 if (!previewLayoutInitialized)
                 {
-                    double previewHeight = image_preview.ActualHeight > 0 ? image_preview.ActualHeight : image_preview.Height;
-                    if (previewHeight <= 0)
-                    {
-                        previewHeight = 800;
-                    }
-
-                    scaleFactor = previewHeight / frameResult.outHeight;
-
-                    int logicalWidth = 800 + (int)(frameResult.outWidth * scaleFactor) - 280;
-                    int logicalHeight = 850;
+                    int logicalWidth = ConfigurePreviewViewport(frameResult.outWidth, frameResult.outHeight);
+                    int logicalHeight = 900;
                     TryResizeAppWindow(logicalWidth, logicalHeight);
                     previewLayoutInitialized = true;
                 }
@@ -1688,9 +2572,18 @@ namespace WoLNamesBlackedOut
                 {
                     _ = RefreshCurrentPreviewFrameIfPausedAsync();
                 }
+                return;
+            }
+
+            if (IsCurrentSourceImageFile())
+            {
+                await RefreshCurrentImagePreviewAsync();
             }
         }
 
+
+
+        // placeholder to locate insertion point
         public class FrameProcessor
         {
             [UnmanagedFunctionPointer(CallingConvention.StdCall)]
@@ -1772,6 +2665,10 @@ namespace WoLNamesBlackedOut
                 [MarshalAs(UnmanagedType.LPUTF8Str)] string bitrate,
                 [MarshalAs(UnmanagedType.LPUTF8Str)] string preset,
                 [MarshalAs(UnmanagedType.I1)] bool disable_audio,
+                int crop_top,
+                int crop_left,
+                int crop_right,
+                int crop_bottom,
                 ProgressCallback progress_callback
             );
 
@@ -1804,6 +2701,17 @@ namespace WoLNamesBlackedOut
                 int buffer_size,
                 out int out_width,
                 out int out_height);
+
+            [DllImport("WoLNamesBlackedOut_DLL.dll", CallingConvention = CallingConvention.StdCall)]
+            private static extern int PreviewGetDimensions(out int out_width, out int out_height);
+
+            [DllImport("WoLNamesBlackedOut_DLL.dll", CallingConvention = CallingConvention.StdCall)]
+            private static extern int GetLatestProcessedPreviewFrame(
+                [Out] byte[] out_bgra_buffer,
+                int buffer_size,
+                out int out_width,
+                out int out_height,
+                out int out_frame_index);
 
             [DllImport("WoLNamesBlackedOut_DLL.dll", CallingConvention = CallingConvention.StdCall)]
             private static extern int PreviewClose();
@@ -1977,6 +2885,58 @@ namespace WoLNamesBlackedOut
                 return System.IO.Path.Combine(AppContext.BaseDirectory, "my_yolov8m_s.onnx");
             }
 
+            public static string ResolveCopyrightPath(string? preferredPath)
+            {
+                try
+                {
+                    if (!string.IsNullOrWhiteSpace(preferredPath) && File.Exists(preferredPath))
+                    {
+                        return preferredPath;
+                    }
+
+                    var candidates = new[]
+                    {
+                        System.IO.Path.Combine(AppContext.BaseDirectory, "C_SQUARE_ENIX.png"),
+                        System.IO.Path.Combine(Environment.CurrentDirectory, "C_SQUARE_ENIX.png"),
+                        System.IO.Path.Combine(AppContext.BaseDirectory, "App12", "C_SQUARE_ENIX.png"),
+                        System.IO.Path.Combine(AppContext.BaseDirectory, "App12", "App12", "C_SQUARE_ENIX.png")
+                    };
+
+                    foreach (var candidate in candidates)
+                    {
+                        if (File.Exists(candidate))
+                        {
+                            return candidate;
+                        }
+                    }
+
+                    // 開発時(Debug)に出力フォルダ直下へ含まれていない場合、
+                    // 実行フォルダから親ディレクトリを遡って C_SQUARE_ENIX.png を探索
+                    var dir = new DirectoryInfo(AppContext.BaseDirectory);
+                    for (int i = 0; i < 10 && dir != null; i++)
+                    {
+                        string directCandidate = System.IO.Path.Combine(dir.FullName, "C_SQUARE_ENIX.png");
+                        if (File.Exists(directCandidate))
+                        {
+                            return directCandidate;
+                        }
+
+                        string projectLikeCandidate = System.IO.Path.Combine(dir.FullName, ".github", "App12", "App12", "C_SQUARE_ENIX.png");
+                        if (File.Exists(projectLikeCandidate))
+                        {
+                            return projectLikeCandidate;
+                        }
+
+                        dir = dir.Parent;
+                    }
+                }
+                catch
+                {
+                }
+
+                return string.Empty;
+            }
+
             private static async Task<(int width, int height)> GetImageDimensionsAsync(string filePath)
             {
                 var file = await StorageFile.GetFileFromPathAsync(filePath);
@@ -2017,6 +2977,10 @@ namespace WoLNamesBlackedOut
                 bool copyright, int blackedOut, int fixedFrame, int blackedout_param, int fixedFrame_param,
                 int copyrightOffsetX, int copyrightOffsetY, float copyrightScale, string copyrightImagePath,
                 string bitrate, string preset, bool disableAudio,
+                int cropTop = 0,
+                int cropLeft = 0,
+                int cropRight = 0,
+                int cropBottom = 0,
                 bool excludeByNameEnabled = false,
                 int ocrExpandPixels = 2,
                 int ocrMaxRoisPerFrame = 6,
@@ -2037,6 +3001,10 @@ namespace WoLNamesBlackedOut
                         textSimilarityThreshold,
                         maskExcludeTextCsv ?? string.Empty,
                         bitrate, preset, disableAudio,
+                        cropTop,
+                        cropLeft,
+                        cropRight,
+                        cropBottom,
                         ProgressCallbackInstance);
                 });
             }
@@ -2048,6 +3016,10 @@ namespace WoLNamesBlackedOut
                  bool copyright, int blackedOut, int fixedFrame, int blackedout_param, int fixedFrame_param,
                  int copyrightOffsetX, int copyrightOffsetY, float copyrightScale, string copyrightImagePath,
                  string bitrate, string preset, bool disableAudio,
+                 int cropTop = 0,
+                 int cropLeft = 0,
+                 int cropRight = 0,
+                 int cropBottom = 0,
                  bool excludeByNameEnabled = false,
                  int ocrExpandPixels = 2,
                  int ocrMaxRoisPerFrame = 6,
@@ -2059,97 +3031,134 @@ namespace WoLNamesBlackedOut
                     blackedOut, fixedFrame, blackedout_param, fixedFrame_param,
                     copyrightOffsetX, copyrightOffsetY, copyrightScale, copyrightImagePath,
                     bitrate, preset, disableAudio,
+                    cropTop,
+                    cropLeft,
+                    cropRight,
+                    cropBottom,
                     excludeByNameEnabled,
                     ocrExpandPixels,
                     ocrMaxRoisPerFrame,
                     textSimilarityThreshold,
                     maskExcludeTextCsv);
             }
-            public static async Task<int> Runpreview_apiAsync(
+            public sealed class PreviewFrameResult
+            {
+                public int Result { get; init; }
+                public byte[] Bgra { get; init; } = Array.Empty<byte>();
+                public int Width { get; init; }
+                public int Height { get; init; }
+                public double OpenMilliseconds { get; init; }
+                public double MaskUpdateMilliseconds { get; init; }
+                public double FrameReadbackMilliseconds { get; init; }
+                public double TotalMilliseconds { get; init; }
+            }
+
+            public static Task<PreviewFrameResult> Runpreview_apiAsync(
                 string image_path_str,
                 RectInfo[] rects,
                 int count, ColorInfo nameColor, ColorInfo fixframeColor,
                 bool copyright, string blackedOut, string fixedFrame, int blackedout_param, int fixedFrame_param, float confThreshold,
-                string copyrightImagePath)
+                string copyrightImagePath,
+                int copyrightOffsetX = 0,
+                int copyrightOffsetY = 0,
+                float copyrightScale = 1.0f)
             {
-                PrepareStatusTracking();
-
-                var previewParams = new NativePreviewParams
+                return Task.Run(() =>
                 {
-                    file_path = image_path_str,
-                    model_path = ResolveModelPath(),
-                    copyright_image_path = copyrightImagePath ?? string.Empty,
-                    input_width = 640,
-                    input_height = 640,
-                    conf_threshold = confThreshold,
-                    iou_threshold = 0.45f,
-                };
+                    PrepareStatusTracking();
+                    var totalStopwatch = Stopwatch.StartNew();
 
-                var openResult = PreviewOpen(ref previewParams);
-                if (openResult != 0)
-                {
-                    return openResult;
-                }
-
-                try
-                {
-                    var nativeRects = new RectInfo[64];
-                    var rectCount = Math.Min(count, nativeRects.Length);
-                    Array.Copy(rects, nativeRects, rectCount);
-
-                    var maskParams = new NativePreviewMaskParams
+                    var previewParams = new NativePreviewParams
                     {
-                        blacked_type = MaskTypeToNative(GetMaskTypeKind(blackedOut)),
-                        name_color = nameColor,
-                        blackedout_param = blackedout_param,
-                        fixmask_type = MaskTypeToNative(GetMaskTypeKind(fixedFrame)),
-                        fixframe_color = fixframeColor,
-                        fixedFrame_param = fixedFrame_param,
-                        fixed_rect_count = rectCount,
-                        fixed_rects = nativeRects,
-                        enable_copyright = copyright,
-                        copyright_offset_x = 0,
-                        copyright_offset_y = 0,
-                        copyright_scale = 1.0f,
-                        exclude_by_name_enabled = false,
-                        ocr_expand_pixels = 2,
-                        ocr_max_rois_per_frame = 6,
-                        text_similarity_threshold = 0.85f,
-                        mask_exclude_text_csv = string.Empty,
-                        reserved = new int[4],
+                        file_path = image_path_str,
+                        model_path = ResolveModelPath(),
+                        copyright_image_path = ResolveCopyrightPath(copyrightImagePath),
+                        input_width = 640,
+                        input_height = 640,
+                        conf_threshold = confThreshold,
+                        iou_threshold = 0.45f,
                     };
 
-                    var updateResult = PreviewUpdateParams(ref maskParams);
-                    if (updateResult != 0)
+                    Debug.WriteLine($"[Preview] copyright path: '{previewParams.copyright_image_path}'");
+
+                    var phaseStopwatch = Stopwatch.StartNew();
+                    int openResult = PreviewOpen(ref previewParams);
+                    double openMilliseconds = phaseStopwatch.Elapsed.TotalMilliseconds;
+                    if (openResult != 0)
                     {
-                        return updateResult;
+                        return new PreviewFrameResult { Result = openResult, OpenMilliseconds = openMilliseconds, TotalMilliseconds = totalStopwatch.Elapsed.TotalMilliseconds };
                     }
 
-                    var (width, height) = await GetImageDimensionsAsync(image_path_str);
-                    if (width <= 0 || height <= 0)
+                    try
                     {
-                        return -10;
-                    }
+                        var nativeRects = new RectInfo[64];
+                        int rectCount = Math.Min(count, nativeRects.Length);
+                        Array.Copy(rects, nativeRects, rectCount);
 
-                    var rgba = new byte[width * height * 4];
-                    var frameResult = PreviewGetFrame(0, rgba, rgba.Length, out int outWidth, out int outHeight);
-                    if (frameResult != 0)
+                        var maskParams = new NativePreviewMaskParams
+                        {
+                            blacked_type = MaskTypeToNative(GetMaskTypeKind(blackedOut)),
+                            name_color = nameColor,
+                            blackedout_param = blackedout_param,
+                            fixmask_type = MaskTypeToNative(GetMaskTypeKind(fixedFrame)),
+                            fixframe_color = fixframeColor,
+                            fixedFrame_param = fixedFrame_param,
+                            fixed_rect_count = rectCount,
+                            fixed_rects = nativeRects,
+                            enable_copyright = copyright,
+                            copyright_offset_x = copyrightOffsetX,
+                            copyright_offset_y = copyrightOffsetY,
+                            copyright_scale = copyrightScale,
+                            exclude_by_name_enabled = false,
+                            ocr_expand_pixels = 2,
+                            ocr_max_rois_per_frame = 6,
+                            text_similarity_threshold = 0.85f,
+                            mask_exclude_text_csv = string.Empty,
+                            reserved = new int[4],
+                        };
+
+                        phaseStopwatch.Restart();
+                        int updateResult = PreviewUpdateParams(ref maskParams);
+                        double maskUpdateMilliseconds = phaseStopwatch.Elapsed.TotalMilliseconds;
+                        if (updateResult != 0)
+                        {
+                            return new PreviewFrameResult { Result = updateResult, OpenMilliseconds = openMilliseconds, MaskUpdateMilliseconds = maskUpdateMilliseconds, TotalMilliseconds = totalStopwatch.Elapsed.TotalMilliseconds };
+                        }
+
+                        int dimensionsResult = PreviewGetDimensions(out int width, out int height);
+                        if (dimensionsResult != 0 || width <= 0 || height <= 0)
+                        {
+                            return new PreviewFrameResult { Result = dimensionsResult != 0 ? dimensionsResult : -10, OpenMilliseconds = openMilliseconds, MaskUpdateMilliseconds = maskUpdateMilliseconds, TotalMilliseconds = totalStopwatch.Elapsed.TotalMilliseconds };
+                        }
+
+                        byte[] bgra = new byte[checked(width * height * 4)];
+                        phaseStopwatch.Restart();
+                        int frameResult = PreviewGetFrame(0, bgra, bgra.Length, out int outWidth, out int outHeight);
+                        double frameReadbackMilliseconds = phaseStopwatch.Elapsed.TotalMilliseconds;
+                        if (frameResult != 0 || outWidth <= 0 || outHeight <= 0)
+                        {
+                            return new PreviewFrameResult { Result = frameResult != 0 ? frameResult : -11, OpenMilliseconds = openMilliseconds, MaskUpdateMilliseconds = maskUpdateMilliseconds, FrameReadbackMilliseconds = frameReadbackMilliseconds, TotalMilliseconds = totalStopwatch.Elapsed.TotalMilliseconds };
+                        }
+
+                        var result = new PreviewFrameResult
+                        {
+                            Result = 0,
+                            Bgra = bgra,
+                            Width = outWidth,
+                            Height = outHeight,
+                            OpenMilliseconds = openMilliseconds,
+                            MaskUpdateMilliseconds = maskUpdateMilliseconds,
+                            FrameReadbackMilliseconds = frameReadbackMilliseconds,
+                            TotalMilliseconds = totalStopwatch.Elapsed.TotalMilliseconds,
+                        };
+                        Debug.WriteLine($"[PreviewTiming] open_ms={result.OpenMilliseconds:F3} mask_update_ms={result.MaskUpdateMilliseconds:F3} frame_readback_ms={result.FrameReadbackMilliseconds:F3} total_ms={result.TotalMilliseconds:F3} png_write_ms=eliminated png_reload_ms=eliminated");
+                        return result;
+                    }
+                    finally
                     {
-                        return frameResult;
+                        PreviewClose();
                     }
-
-                    if (outWidth <= 0 || outHeight <= 0)
-                    {
-                        return -11;
-                    }
-
-                    await SavePreviewBufferToPngAsync(image_path_str, rgba, outWidth, outHeight);
-                    return 0;
-                }
-                finally
-                {
-                    PreviewClose();
-                }
+                });
             }
 
             public static int PreviewOpenSession(string sourcePath, float confThreshold, string copyrightImagePath)
@@ -2160,12 +3169,14 @@ namespace WoLNamesBlackedOut
                 {
                     file_path = sourcePath,
                     model_path = ResolveModelPath(),
-                    copyright_image_path = copyrightImagePath ?? string.Empty,
+                    copyright_image_path = ResolveCopyrightPath(copyrightImagePath),
                     input_width = 640,
                     input_height = 640,
                     conf_threshold = confThreshold,
                     iou_threshold = 0.45f,
                 };
+
+                Debug.WriteLine($"[PreviewSession] copyright path: '{previewParams.copyright_image_path}'");
 
                 return PreviewOpen(ref previewParams);
             }
@@ -2221,6 +3232,33 @@ namespace WoLNamesBlackedOut
             public static int PreviewGetFrameBuffer(int frameIndex, byte[] bgraBuffer, out int outWidth, out int outHeight)
             {
                 return PreviewGetFrame(frameIndex, bgraBuffer, bgraBuffer.Length, out outWidth, out outHeight);
+            }
+
+            public static int TryGetLatestProcessedPreviewFrameBuffer(byte[] bgraBuffer, out int outWidth, out int outHeight, out int outFrameIndex)
+            {
+                outWidth = 0;
+                outHeight = 0;
+                outFrameIndex = -1;
+
+                if (bgraBuffer == null || bgraBuffer.Length == 0)
+                {
+                    return -1;
+                }
+
+                try
+                {
+                    return GetLatestProcessedPreviewFrame(
+                        bgraBuffer,
+                        bgraBuffer.Length,
+                        out outWidth,
+                        out outHeight,
+                        out outFrameIndex);
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"GetLatestProcessedPreviewFrame failed: {ex.Message}");
+                    return -99;
+                }
             }
 
             public static void PreviewCloseSessionSafe()
@@ -2282,6 +3320,17 @@ namespace WoLNamesBlackedOut
             return (blackedOutColorInfo, fixedFrameColorInfo);
         }
 
+        private string ResolveActiveCopyrightPath()
+        {
+            string resolved = FrameProcessor.ResolveCopyrightPath(copyrightImagePath);
+            if (!string.IsNullOrWhiteSpace(resolved))
+            {
+                copyrightImagePath = resolved;
+            }
+
+            return resolved;
+        }
+
         private void StopRealtimePreviewSession(bool skipNativeClose = false)
         {
             previewTimer?.Stop();
@@ -2289,7 +3338,7 @@ namespace WoLNamesBlackedOut
             copyrightDragging = false;
             if (previewSessionOpen)
             {
-                bool shouldSkipNativeClose = skipNativeClose || isWindowClosing || previewTickBusy;
+                bool shouldSkipNativeClose = skipNativeClose || previewTickBusy;
                 previewSessionOpen = false;
 
                 if (!shouldSkipNativeClose)
@@ -2312,6 +3361,68 @@ namespace WoLNamesBlackedOut
             copyrightDragging = false;
         }
 
+        private void ResetProcessingPreviewState()
+        {
+            processingPreviewEnabled = false;
+            processingPreviewUpdateBusy = false;
+            processingPreviewLastUpdateMs = 0;
+            processingPreviewFrameOffset = 0;
+        }
+
+        private bool IsProcessingPreviewRequested()
+        {
+            return ProcessingPreviewEnabledCheckBox?.IsChecked == true;
+        }
+
+        private Slider? GetProcessingPreviewIntervalSlider()
+        {
+            return this.Content is FrameworkElement root
+                ? root.FindName("ProcessingPreviewIntervalSlider") as Slider
+                : null;
+        }
+
+        private int GetProcessingPreviewIntervalMilliseconds()
+        {
+            double seconds = GetProcessingPreviewIntervalSlider()?.Value ?? 1.0;
+            if (seconds <= 0 || double.IsNaN(seconds) || double.IsInfinity(seconds))
+            {
+                seconds = 1.0;
+            }
+
+            return (int)Math.Clamp(Math.Round(seconds * 1000.0), 200.0, 3000.0);
+        }
+
+        private async Task InitializeProcessingPreviewAsync(string sourcePath, int trimStartSeconds)
+        {
+            ResetProcessingPreviewState();
+
+            if (isWindowClosing ||
+                !IsProcessingPreviewRequested() ||
+                string.IsNullOrWhiteSpace(sourcePath) ||
+                !sourcePath.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            bool opened = await StartRealtimePreviewSessionAsync(sourcePath);
+            if (!opened || isWindowClosing || !previewSessionOpen)
+            {
+                return;
+            }
+
+            processingPreviewFrameOffset = Math.Max(0, trimStartSeconds) * Math.Max(1, v_fps);
+            processingPreviewEnabled = true;
+
+            int initialFrame = Math.Clamp(processingPreviewFrameOffset, 0, Math.Max(1, v_nb_frames) - 1);
+            await PreviewSingleFrameAsync(initialFrame);
+        }
+
+        private void StopProcessingPreviewSession()
+        {
+            ResetProcessingPreviewState();
+            StopRealtimePreviewSession();
+        }
+
         private async Task<bool> StartRealtimePreviewSessionAsync(string sourcePath)
         {
             StopRealtimePreviewSession();
@@ -2330,14 +3441,48 @@ namespace WoLNamesBlackedOut
             int fpsValue = Math.Max(1, v_fps);
             previewFrameStep = Math.Max(1, fpsValue / 30);
             previewTimer.Interval = TimeSpan.FromMilliseconds(Math.Max(20, 1000.0 / Math.Min(30, fpsValue)));
-            double previewHeight = image_preview.ActualHeight > 0 ? image_preview.ActualHeight : image_preview.Height;
-            if (previewHeight <= 0)
-            {
-                previewHeight = 800;
-            }
-            scaleFactor = previewHeight / Math.Max(1, v_height);
+            _ = ConfigurePreviewViewport(v_width, v_height);
 
             return true;
+        }
+
+        private async Task<bool> EnsurePreviewSessionForCopyrightEditAsync()
+        {
+            if (previewSessionOpen)
+            {
+                return true;
+            }
+
+            if (isWindowClosing || running_state || string.IsNullOrWhiteSpace(v_file_path) || !File.Exists(v_file_path))
+            {
+                return false;
+            }
+
+            if (previewSessionAutoOpenBusy)
+            {
+                return false;
+            }
+
+            previewSessionAutoOpenBusy = true;
+            try
+            {
+                bool opened = await StartRealtimePreviewSessionAsync(v_file_path);
+                if (!opened || !previewSessionOpen)
+                {
+                    return false;
+                }
+
+                string resolvedPath = FrameProcessor.ResolveCopyrightPath(copyrightImagePath);
+                FrameProcessor.SetCopyrightImagePath(resolvedPath);
+
+                previewFrameIndex = IsCurrentSourceImageFile() ? 0 : GetTargetFrameIndexFromSlider();
+                await PreviewSingleFrameAsync(previewFrameIndex, false);
+                return previewSessionOpen;
+            }
+            finally
+            {
+                previewSessionAutoOpenBusy = false;
+            }
         }
 
         private int GetTargetFrameIndexFromSlider()
@@ -2446,20 +3591,13 @@ namespace WoLNamesBlackedOut
                     previewBitmap = new WriteableBitmap(outWidth2, outHeight2);
                     image_preview.Source = previewBitmap;
                     previewLayoutInitialized = false;
+                    UpdateCropNumberBoxMaximums_Helper(outWidth2, outHeight2);
                 }
 
                 if (!previewLayoutInitialized)
                 {
-                    double previewHeight = image_preview.ActualHeight > 0 ? image_preview.ActualHeight : image_preview.Height;
-                    if (previewHeight <= 0)
-                    {
-                        previewHeight = 800;
-                    }
-
-                    scaleFactor = previewHeight / outHeight2;
-
-                    int logicalWidth = 800 + (int)(outWidth2 * scaleFactor) - 280;
-                    int logicalHeight = 850;
+                    int logicalWidth = ConfigurePreviewViewport(outWidth2, outHeight2);
+                    int logicalHeight = 900;
                     TryResizeAppWindow(logicalWidth, logicalHeight);
                     previewLayoutInitialized = true;
                 }
@@ -2695,7 +3833,17 @@ namespace WoLNamesBlackedOut
                 frameResult = (retry, outWidth, outHeight);
             }
 
-            await SaveBgraToFileAsync(file, bgra, frameResult.outWidth, frameResult.outHeight);
+            // Apply post-processing crop if enabled
+            if (CropEnabledCheckBox != null && CropEnabledCheckBox.IsChecked == true)
+            {
+                int outW, outH;
+                byte[] cropped = CropBgraBuffer_Helper(bgra, frameResult.outWidth, frameResult.outHeight, cropTop, cropLeft, cropRight, cropBottom, out outW, out outH);
+                await SaveBgraToFileAsync(file, cropped, outW, outH);
+            }
+            else
+            {
+                await SaveBgraToFileAsync(file, bgra, frameResult.outWidth, frameResult.outHeight);
+            }
             return true;
         }
 
@@ -2712,68 +3860,40 @@ namespace WoLNamesBlackedOut
                 return false;
             }
 
-            string tempDirectory = System.IO.Path.GetTempPath();
-            string tempFileName = $"tmp_wol_save_{DateTime.Now:yyyyMMddHHmmssfff}.png";
-            string tempOutputPath = System.IO.Path.Combine(tempDirectory, tempFileName);
+            var rectInfos = BuildRectInfos();
+            var (nameColor, fixedColor) = BuildMaskColors();
+            FrameProcessor.PreviewFrameResult result = await FrameProcessor.Runpreview_apiAsync(
+                v_file_path,
+                rectInfos,
+                rectInfos.Length,
+                nameColor,
+                fixedColor,
+                Add_Copyright.IsChecked == true,
+                GetComboText(BlackedOut_ComboBox, "Solid"),
+                GetComboText(FixedFrame_ComboBox, "Solid"),
+                (int)BlackedOutSlideBar.Value,
+                (int)FixedFrameSlideBar.Value,
+                GetYoloThreshold(),
+                copyrightImagePath ?? string.Empty,
+                copyrightOffsetX,
+                copyrightOffsetY,
+                (float)copyrightZoomScale);
 
-            try
+            if (result.Result != 0)
             {
-                File.Copy(v_file_path, tempOutputPath, true);
-
-                var rectInfos = BuildRectInfos();
-                var (nameColor, fixedColor) = BuildMaskColors();
-                bool addCopyright = Add_Copyright.IsChecked == true;
-                string blackedOut = GetComboText(BlackedOut_ComboBox, "Solid");
-                string fixedFrame = GetComboText(FixedFrame_ComboBox, "Solid");
-                int blackedOutParam = (int)BlackedOutSlideBar.Value;
-                int fixedFrameParam = (int)FixedFrameSlideBar.Value;
-
-                int result = await FrameProcessor.Runpreview_apiAsync(
-                    tempOutputPath,
-                    rectInfos,
-                    rectInfos.Length,
-                    nameColor,
-                    fixedColor,
-                    addCopyright,
-                    blackedOut,
-                    fixedFrame,
-                    blackedOutParam,
-                    fixedFrameParam,
-                    GetYoloThreshold(),
-                    copyrightImagePath ?? string.Empty);
-
-                if (result != 0 || !File.Exists(tempOutputPath))
-                {
-                    return false;
-                }
-
-                StorageFile processedFile = await StorageFile.GetFileFromPathAsync(tempOutputPath);
-                using var processedStream = await processedFile.OpenReadAsync();
-                var decoder = await BitmapDecoder.CreateAsync(processedStream);
-                var pixelData = await decoder.GetPixelDataAsync(
-                    BitmapPixelFormat.Bgra8,
-                    BitmapAlphaMode.Ignore,
-                    new BitmapTransform(),
-                    ExifOrientationMode.IgnoreExifOrientation,
-                    ColorManagementMode.DoNotColorManage);
-
-                byte[] bgra = pixelData.DetachPixelData();
-                await SaveBgraToFileAsync(file, bgra, (int)decoder.PixelWidth, (int)decoder.PixelHeight);
-                return true;
+                return false;
             }
-            finally
+
+            if (CropEnabledCheckBox != null && CropEnabledCheckBox.IsChecked == true)
             {
-                try
-                {
-                    if (File.Exists(tempOutputPath))
-                    {
-                        File.Delete(tempOutputPath);
-                    }
-                }
-                catch
-                {
-                }
+                byte[] cropped = CropBgraBuffer_Helper(result.Bgra, result.Width, result.Height, cropTop, cropLeft, cropRight, cropBottom, out int outW, out int outH);
+                await SaveBgraToFileAsync(file, cropped, outW, outH);
             }
+            else
+            {
+                await SaveBgraToFileAsync(file, result.Bgra, result.Width, result.Height);
+            }
+            return true;
         }
 
         private async void ShowColorDialog_Click(object sender, Microsoft.UI.Xaml.RoutedEventArgs e)
@@ -2983,11 +4103,18 @@ namespace WoLNamesBlackedOut
                 ForX.IsEnabled = false;
                 YoloThresholdSlider.IsEnabled = false;
                 DisableAudio.IsEnabled = false;
+                ProcessingPreviewEnabledCheckBox.IsEnabled = false;
+                var processingPreviewIntervalSlider = GetProcessingPreviewIntervalSlider();
+                if (processingPreviewIntervalSlider != null)
+                {
+                    processingPreviewIntervalSlider.IsEnabled = false;
+                }
                 SelectCopyrightImageButton.IsEnabled = false;
                 SetSliderToStartButton.IsEnabled = false;
                 SetSliderToEndButton.IsEnabled = false;
                 ExcludeByNameEnabledCheckBox.IsEnabled = false;
                 OpenExcludeByNameSettingsButton.IsEnabled = false;
+                SetCropControlsEnabled(false);
             }
             catch (ArgumentException)
             {
@@ -3005,25 +4132,20 @@ namespace WoLNamesBlackedOut
             try
             {
                 PickAFileButton.IsEnabled = true;
-                if ((PickAFileOutputTextBlock.Text != "Operation cancelled.") && ((PickAFileOutputTextBlock.Text != "")))
+                bool hasSelectedFile = PickAFileOutputTextBlock.Text != "Operation cancelled."
+                    && PickAFileOutputTextBlock.Text != "";
+                bool isVideoFile = hasSelectedFile
+                    && PickAFileOutputTextBlock.Text.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase);
+
+                if (hasSelectedFile)
                 {
                     PreviewButton.IsEnabled = true;
                     SaveImageButton.IsEnabled = true;
-                    string fileName = PickAFileOutputTextBlock.Text;
-                    bool isVideoFile = fileName.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase);
 
                     FrameSlideBar.IsEnabled = isVideoFile;
                     SetSliderToStartButton.IsEnabled = isVideoFile;
                     SetSliderToEndButton.IsEnabled = isVideoFile;
-
-                    if (fileName.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase))
-                    {
-                        BlackedOutStartButton.IsEnabled = true;
-                    }
-                    else
-                    {
-                        BlackedOutStartButton.IsEnabled = false;
-                    }
+                    BlackedOutStartButton.IsEnabled = isVideoFile;
                 }
                 else
                 {
@@ -3035,23 +4157,30 @@ namespace WoLNamesBlackedOut
                 }
                 BlackedOut_color.IsEnabled = true;
                 FixedFrame_color.IsEnabled = true;
-                Start_min.IsEnabled = true;
-                Start_sec.IsEnabled = true;
-                End_min.IsEnabled = true;
-                End_sec.IsEnabled = true;
+                Start_min.IsEnabled = isVideoFile;
+                Start_sec.IsEnabled = isVideoFile;
+                End_min.IsEnabled = isVideoFile;
+                End_sec.IsEnabled = isVideoFile;
                 Add_Copyright.IsEnabled = true;
                 YoloThresholdSlider.IsEnabled = true;
-                DisableAudio.IsEnabled = true;
+                DisableAudio.IsEnabled = isVideoFile;
+                ProcessingPreviewEnabledCheckBox.IsEnabled = isVideoFile;
+                var processingPreviewIntervalSlider = GetProcessingPreviewIntervalSlider();
+                if (processingPreviewIntervalSlider != null)
+                {
+                    processingPreviewIntervalSlider.IsEnabled = isVideoFile;
+                }
                 SelectCopyrightImageButton.IsEnabled = true;
                 ExcludeByNameEnabledCheckBox.IsEnabled = true;
                 OpenExcludeByNameSettingsButton.IsEnabled = excludeByNameEnabled;
+                SetCropControlsEnabled(HasLoadedSourceFile());
                 if (useblackedout == true)
                 {
                     BlackedOut_ComboBox.IsEnabled = true;
                     FixedFrame_ComboBox.IsEnabled = true;
                     BlackedOutSlideBar.IsEnabled = true;
                     FixedFrameSlideBar.IsEnabled = true;
-                    BitrateSlideBar.IsEnabled = true;
+                    BitrateSlideBar.IsEnabled = isVideoFile;
                 }
                 Start_End_min_sec_ValueChanged(null, null);
             }
@@ -3154,7 +4283,7 @@ namespace WoLNamesBlackedOut
                         new TextBlock { Text = versionText, FontSize=16,Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 12) ,HorizontalAlignment = HorizontalAlignment.Center},
                         new HyperlinkButton { Content = "Calocen Rieti(Twitter)", NavigateUri = new Uri("https://x.com/calcMCalcm"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                         new HyperlinkButton { Content = "Support Site", NavigateUri = new Uri("https://blog.calocenrieti.com/blog/wol_names_blacked_out_win/"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center},
-                        new HyperlinkButton { Content = "Discord", NavigateUri = new Uri("https://discord.gg/q2Hqr4tD8v"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center},
+                        //new HyperlinkButton { Content = "Discord", NavigateUri = new Uri("https://discord.gg/q2Hqr4tD8v"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center},
                         new HyperlinkButton { Content = "GitHub", NavigateUri = new Uri("https://github.com/calocenrieti/WoLNamesBlackedOutWin"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 12) ,HorizontalAlignment = HorizontalAlignment.Center},
                         new HyperlinkButton { Content = "Donate", NavigateUri = new Uri("https://buymeacoffee.com/calocenrieti"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 12) ,HorizontalAlignment = HorizontalAlignment.Center},
                         new TextBlock { Text = "This software uses FFmpeg licensed under the LGPLv2 \nand its source can be downloaded https://github.com/FFmpeg/FFmpeg.git", FontSize=12,Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 8) ,HorizontalAlignment = HorizontalAlignment.Center,TextWrapping=TextWrapping.Wrap}
@@ -3268,11 +4397,7 @@ namespace WoLNamesBlackedOut
                 RemoveAllRectangles();
                 return;
             }
-            else //静止画の時
-            {
-                File.Copy(v_file_path, outputPath, true);
-            }
-            last_preview_image = outputPath;
+            last_preview_image = string.Empty;
 
             // RectInfo 配列を作成
             RectInfo[] rectInfos = savedRects.Select(rect => new RectInfo
@@ -3307,10 +4432,11 @@ namespace WoLNamesBlackedOut
 
             BeginPreviewStatusFeedback(GetLocalizedString("Runtime.PreviewInitializing", "Preparing preview..."));
             bool previewApiSucceeded = false;
+            FrameProcessor.PreviewFrameResult? previewFrame = null;
             try
             {
-                await FrameProcessor.Runpreview_apiAsync(outputPath, rectInfos, rectInfos.Length, BlackedOut_color_icon_color_info, FixedFrame_color_icon_color_Info, Add_Copyright.IsChecked.Value, GetComboText(BlackedOut_ComboBox, "Solid"), GetComboText(FixedFrame_ComboBox, "Solid"), (int)BlackedOutSlideBar.Value, (int)FixedFrameSlideBar.Value, GetYoloThreshold(), copyrightImagePath ?? string.Empty);
-                previewApiSucceeded = true;
+                previewFrame = await FrameProcessor.Runpreview_apiAsync(v_file_path, rectInfos, rectInfos.Length, BlackedOut_color_icon_color_info, FixedFrame_color_icon_color_Info, Add_Copyright.IsChecked.Value, GetComboText(BlackedOut_ComboBox, "Solid"), GetComboText(FixedFrame_ComboBox, "Solid"), (int)BlackedOutSlideBar.Value, (int)FixedFrameSlideBar.Value, GetYoloThreshold(), copyrightImagePath ?? string.Empty, copyrightOffsetX, copyrightOffsetY, (float)copyrightZoomScale);
+                previewApiSucceeded = previewFrame.Result == 0;
             }
             finally
             {
@@ -3319,29 +4445,10 @@ namespace WoLNamesBlackedOut
                     : GetLocalizedString("Runtime.PreviewInitFailed", "Preview initialization failed"));
             }
 
-            // 保存された PNG ファイルを Image コントロールに表示
-            var bitmapImage = new BitmapImage(new Uri(outputPath));
-
-            bitmapImage.ImageOpened += (s, ev) =>
+            if (previewFrame != null && UpdateImagePreview(previewFrame))
             {
-                if (isWindowClosing)
-                {
-                    return;
-                }
-
-                var originalHeight = bitmapImage.PixelHeight;
-                scaleFactor = image_preview.Height / originalHeight;
-                // 縮小率を表示
                 Debug.WriteLine($"縮小率: {scaleFactor}");
-
-                int logicalWidth = 800 + (int)(bitmapImage.PixelWidth * scaleFactor) - 280;
-                int logicalHeight = 850;
-                TryResizeAppWindow(logicalWidth, logicalHeight);
-
-
-                image_preview.Source = bitmapImage;
                 SafeSetProgressIndeterminate(false);
-                //PreviewButton.IsEnabled = true;
                 UIControl_enable_true();
                 PreviewButton.IsEnabled = true;
                 running_state = false;
@@ -3349,14 +4456,7 @@ namespace WoLNamesBlackedOut
                 PreviewButton.IsChecked = false;
                 suppressPreviewToggleEvent = false;
                 SetPreviewButtonVisual(false);
-
-                // 描画されている矩形を全て消去
-                RemoveAllRectangles();
-
-            };
-
-            // BitmapImage の読み込みを開始
-            image_preview.Source = bitmapImage;
+            }
             SaveImageButton.IsEnabled = true;
         }
 
@@ -3467,6 +4567,7 @@ namespace WoLNamesBlackedOut
             }
 
             StopRealtimePreviewSession();
+            ResetProcessingPreviewState();
             suppressPreviewToggleEvent = true;
             PreviewButton.IsChecked = false;
             suppressPreviewToggleEvent = false;
@@ -3483,6 +4584,14 @@ namespace WoLNamesBlackedOut
             {
                 UIControl_enable_false();
                 BlackedOutStartButton.IsEnabled = true;
+                ProcessingPreviewEnabledCheckBox.IsEnabled = true;
+                SetCropControlsEnabled(false);
+                RemoveCropOverlayShapes();
+                var processingPreviewIntervalSlider = GetProcessingPreviewIntervalSlider();
+                if (processingPreviewIntervalSlider != null)
+                {
+                    processingPreviewIntervalSlider.IsEnabled = true;
+                }
                 running_state = true;
                 string tempDirectory = System.IO.Path.GetTempPath();
                 string video_temp_filename_2 = System.IO.Path.Combine(tempDirectory, $"tmp_wol_{DateTime.Now:yyyyMMddHHmmssfff}_2.mp4");
@@ -3554,6 +4663,7 @@ namespace WoLNamesBlackedOut
                 {
                     stopwatch.Stop();
                     timer.Stop();
+                    StopProcessingPreviewSession();
                     StopButton.IsEnabled = false;
                     FFMpeg_text.Text = "";
                     cancel_pending_state = false;
@@ -3561,6 +4671,8 @@ namespace WoLNamesBlackedOut
                     running_state = false;
                     return;
                 }
+
+                await InitializeProcessingPreviewAsync(video_temp_filename_1, start_time);
 
                 StopButton.IsEnabled = false;
                 stopwatch.Reset();
@@ -3570,11 +4682,12 @@ namespace WoLNamesBlackedOut
                 int processResult;
 
                 {
-                    processResult = await FrameProcessor.RunDmlMainAsync(video_temp_filename_1, video_temp_filename_2, effectiveCodec, hwaccel, v_width, v_height, v_fps, start_time, end_time, GetYoloThreshold(), v_color_primaries, rectInfos, rectInfos.Length, BlackedOut_color_icon_color_info, FixedFrame_color_icon_color_Info, Add_Copyright.IsChecked.Value, FrameProcessor.MaskTypeToNative(FrameProcessor.GetMaskTypeKind(GetComboText(BlackedOut_ComboBox, "Solid"))), FrameProcessor.MaskTypeToNative(FrameProcessor.GetMaskTypeKind(GetComboText(FixedFrame_ComboBox, "Solid"))), (int)BlackedOutSlideBar.Value, (int)FixedFrameSlideBar.Value, copyrightOffsetX, copyrightOffsetY, (float)copyrightZoomScale, copyrightImagePath ?? string.Empty, v_bitrate, preset, disableAudio, excludeByNameEnabled, ocrExpandPixels, ocrMaxRoisPerFrame, GetTextSimilarityThreshold(), maskExcludeTextCsv);
+                    processResult = await FrameProcessor.RunDmlMainAsync(video_temp_filename_1, video_temp_filename_2, effectiveCodec, hwaccel, v_width, v_height, v_fps, start_time, end_time, GetYoloThreshold(), v_color_primaries, rectInfos, rectInfos.Length, BlackedOut_color_icon_color_info, FixedFrame_color_icon_color_Info, Add_Copyright.IsChecked.Value, FrameProcessor.MaskTypeToNative(FrameProcessor.GetMaskTypeKind(GetComboText(BlackedOut_ComboBox, "Solid"))), FrameProcessor.MaskTypeToNative(FrameProcessor.GetMaskTypeKind(GetComboText(FixedFrame_ComboBox, "Solid"))), (int)BlackedOutSlideBar.Value, (int)FixedFrameSlideBar.Value, copyrightOffsetX, copyrightOffsetY, (float)copyrightZoomScale, copyrightImagePath ?? string.Empty, v_bitrate, preset, disableAudio, CropEnabledCheckBox?.IsChecked == true ? cropTop : 0, CropEnabledCheckBox?.IsChecked == true ? cropLeft : 0, CropEnabledCheckBox?.IsChecked == true ? cropRight : 0, CropEnabledCheckBox?.IsChecked == true ? cropBottom : 0, excludeByNameEnabled, ocrExpandPixels, ocrMaxRoisPerFrame, GetTextSimilarityThreshold(), maskExcludeTextCsv);
                 }
 
                 stopwatch.Stop();
                 timer.Stop();
+                StopProcessingPreviewSession();
                 StopButton.IsEnabled = false;
 
                 if (isWindowClosing)
@@ -3689,6 +4802,10 @@ namespace WoLNamesBlackedOut
                 cancel_state = false;
                 UIControl_enable_true();
                 running_state = false;
+                if (CropEnabledCheckBox?.IsChecked == true)
+                {
+                    RedrawCropOverlay();
+                }
 
                 if (shouldReopenPreview)
                 {
@@ -3728,9 +4845,26 @@ namespace WoLNamesBlackedOut
 
             if (cancel_pending_state)
             {
-                suppressBlackedOutToggleEvent = true;
-                BlackedOutStartButton.IsChecked = false;
-                suppressBlackedOutToggleEvent = false;
+                if (!isWindowClosing)
+                {
+                    try
+                    {
+                        suppressBlackedOutToggleEvent = true;
+                        BlackedOutStartButton.IsChecked = false;
+                    }
+                    catch (ArgumentException)
+                    {
+                        isWindowClosing = true;
+                    }
+                    catch (COMException)
+                    {
+                        isWindowClosing = true;
+                    }
+                    finally
+                    {
+                        suppressBlackedOutToggleEvent = false;
+                    }
+                }
                 return;
             }
 
@@ -3742,6 +4876,7 @@ namespace WoLNamesBlackedOut
             }
             catch (Exception ex)
             {
+                StopProcessingPreviewSession();
                 Debug.WriteLine($"BlackedOutStartButton_Checked failed: {ex.Message}");
                 InfoBar.Message = "Processing failed";
                 InfoBar.Severity = InfoBarSeverity.Error;
@@ -3751,10 +4886,28 @@ namespace WoLNamesBlackedOut
             finally
             {
                 cancel_pending_state = false;
-                suppressBlackedOutToggleEvent = true;
-                BlackedOutStartButton.IsChecked = false;
-                suppressBlackedOutToggleEvent = false;
-                SetBlackedOutButtonVisual(false);
+                if (!isWindowClosing)
+                {
+                    try
+                    {
+                        suppressBlackedOutToggleEvent = true;
+                        BlackedOutStartButton.IsChecked = false;
+                    }
+                    catch (ArgumentException)
+                    {
+                        isWindowClosing = true;
+                    }
+                    catch (COMException)
+                    {
+                        isWindowClosing = true;
+                    }
+                    finally
+                    {
+                        suppressBlackedOutToggleEvent = false;
+                    }
+
+                    SetBlackedOutButtonVisual(false);
+                }
             }
         }
 
@@ -3777,8 +4930,41 @@ namespace WoLNamesBlackedOut
 
         private async void DrawingCanvas_PointerPressed(object sender, PointerRoutedEventArgs e)
         {
-            if (running_state == true)
+            if (isWindowClosing)
             {
+                e.Handled = true;
+                return;
+            }
+
+            var pointerPoint = e.GetCurrentPoint(DrawingCanvas);
+            bool isMiddleButtonPressed = pointerPoint.Properties.IsMiddleButtonPressed;
+
+            if (running_state && !isMiddleButtonPressed)
+            {
+                return;
+            }
+
+            if (isMiddleButtonPressed)
+            {
+                previewPanning = true;
+                var panPoint = GetPreviewContainerPoint(e);
+                previewPanStartX = panPoint.X;
+                previewPanStartY = panPoint.Y;
+                previewPanOriginX = previewPanOffsetX;
+                previewPanOriginY = previewPanOffsetY;
+                try
+                {
+                    DrawingCanvas.CapturePointer(e.Pointer);
+                }
+                catch (ArgumentException)
+                {
+                    previewPanning = false;
+                }
+                catch (COMException)
+                {
+                    previewPanning = false;
+                }
+                e.Handled = true;
                 return;
             }
 
@@ -3786,14 +4972,49 @@ namespace WoLNamesBlackedOut
             bool isCtrlPressed = (e.KeyModifiers & Windows.System.VirtualKeyModifiers.Control) != 0;
             bool isLeftButton = e.GetCurrentPoint(DrawingCanvas).Properties.IsLeftButtonPressed;
 
+            if (!isCtrlPressed && isLeftButton && TryBeginCropBoundaryDrag(GetPreviewCanvasPoint(e)))
+            {
+                try
+                {
+                    if (!DrawingCanvas.CapturePointer(e.Pointer))
+                    {
+                        cropDragEdge = CropDragEdge.None;
+                    }
+                }
+                catch (ArgumentException)
+                {
+                    cropDragEdge = CropDragEdge.None;
+                }
+                catch (COMException)
+                {
+                    cropDragEdge = CropDragEdge.None;
+                }
+
+                if (cropDragEdge != CropDragEdge.None)
+                {
+                    e.Handled = true;
+                    return;
+                }
+            }
+
             bool canEditCopyright = previewSessionOpen ||
-                                    (PickAFileOutputTextBlock.Text?.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase) == true);
+                                    (PickAFileOutputTextBlock.Text?.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase) == true) ||
+                                    IsCurrentSourceImageFile();
 
             if (isCtrlPressed && isLeftButton && canEditCopyright)
             {
+                if (!previewSessionOpen && IsCurrentSourceImageFile())
+                {
+                    bool opened = await EnsurePreviewSessionForCopyrightEditAsync();
+                    if (!opened)
+                    {
+                        return;
+                    }
+                }
+
                 // Start copyright dragging
                 copyrightDragging = true;
-                var point = e.GetCurrentPoint(DrawingCanvas).Position;
+                var point = GetPreviewCanvasPoint(e);
                 copyrightDragStartX = point.X;
                 copyrightDragStartY = point.Y;
                 e.Handled = true;
@@ -3827,7 +5048,7 @@ namespace WoLNamesBlackedOut
             else if (!isDrawing)
             {
                 // 左クリックで矩形描画の開始
-                startPoint = e.GetCurrentPoint(DrawingCanvas).Position;
+                startPoint = GetPreviewCanvasPoint(e);
                 isDrawing = true;
 
                 // ComboBoxの選択値を確認
@@ -3888,7 +5109,7 @@ namespace WoLNamesBlackedOut
                 }
 
                 // 2点クリック仕様: 2回目クリック位置を終点として矩形を確定
-                var endPoint = e.GetCurrentPoint(DrawingCanvas).Position;
+                var endPoint = GetPreviewCanvasPoint(e);
                 var finalWidth = Math.Abs(endPoint.X - startPoint.X);
                 var finalHeight = Math.Abs(endPoint.Y - startPoint.Y);
                 currentRectangle.Width = finalWidth;
@@ -3954,16 +5175,43 @@ namespace WoLNamesBlackedOut
 
         private void DrawingCanvas_PointerMoved(object sender, PointerRoutedEventArgs e)
         {
-            if (running_state == true)
+            if (isWindowClosing)
             {
+                e.Handled = true;
                 return;
             }
 
-            var currentPoint = e.GetCurrentPoint(DrawingCanvas).Position;
+            if (previewPanning)
+            {
+                SetDrawingCanvasCursor(Microsoft.UI.Input.InputSystemCursorShape.Arrow);
+                var panPoint = GetPreviewContainerPoint(e);
+                previewPanOffsetX = previewPanOriginX + (panPoint.X - previewPanStartX);
+                previewPanOffsetY = previewPanOriginY + (panPoint.Y - previewPanStartY);
+                ApplyPreviewCanvasTransform();
+                e.Handled = true;
+                return;
+            }
+
+            if (running_state)
+            {
+                SetDrawingCanvasCursor(Microsoft.UI.Input.InputSystemCursorShape.Arrow);
+                return;
+            }
+
+            var currentPoint = GetPreviewCanvasPoint(e);
+
+            if (cropDragEdge != CropDragEdge.None)
+            {
+                UpdateCropBoundaryCursor(currentPoint);
+                UpdateCropBoundaryFromDrag(currentPoint);
+                e.Handled = true;
+                return;
+            }
 
             // Handle copyright dragging (Ctrl+drag)
             if (copyrightDragging)
             {
+                SetDrawingCanvasCursor(Microsoft.UI.Input.InputSystemCursorShape.Arrow);
                 double deltaX = currentPoint.X - copyrightDragStartX;
                 double deltaY = currentPoint.Y - copyrightDragStartY;
 
@@ -3980,8 +5228,10 @@ namespace WoLNamesBlackedOut
                 // Send position update to native DLL if preview is open
                 if (previewSessionOpen)
                 {
+                    string resolvedPath = ResolveActiveCopyrightPath();
+                    FrameProcessor.SetCopyrightImagePath(resolvedPath);
                     FrameProcessor.SetCopyrightOffset(copyrightOffsetX, copyrightOffsetY);
-                    _ = RefreshCurrentPreviewFrameIfPausedAsync();
+                    _ = PreviewSingleFrameAsync(previewFrameIndex, false);
                 }
 
                 Debug.WriteLine($"Copyright position: x={copyrightOffsetX}, y={copyrightOffsetY}");
@@ -3991,8 +5241,11 @@ namespace WoLNamesBlackedOut
 
             if (!isDrawing || currentRectangle == null)
             {
+                UpdateCropBoundaryCursor(currentPoint);
                 return;
             }
+
+            SetDrawingCanvasCursor(Microsoft.UI.Input.InputSystemCursorShape.Arrow);
 
             // 矩形のサイズを更新
             var width = Math.Abs(currentPoint.X - startPoint.X);
@@ -4030,64 +5283,136 @@ namespace WoLNamesBlackedOut
 
         }
 
+        private void DrawingCanvas_PointerExited(object sender, PointerRoutedEventArgs e)
+        {
+            if (cropDragEdge == CropDragEdge.None)
+            {
+                SetDrawingCanvasCursor(Microsoft.UI.Input.InputSystemCursorShape.Arrow);
+            }
+        }
+
         // 矩形のみ削除するためのメソッド
         private void RemoveAllRectangles()
         {
+            RemoveCropOverlayShapes();
+
             var rectangles = DrawingCanvas.Children.OfType<Rectangle>().ToList();
             foreach (var rectangle in rectangles)
             {
                 DrawingCanvas.Children.Remove(rectangle);
             }
+
+            RedrawCropOverlay();
         }
 
         private void DrawingCanvas_PointerReleased(object sender, PointerRoutedEventArgs e)
         {
+            if (isWindowClosing)
+            {
+                e.Handled = true;
+                return;
+            }
+
+            if (cropDragEdge != CropDragEdge.None)
+            {
+                cropDragEdge = CropDragEdge.None;
+                try
+                {
+                    DrawingCanvas.ReleasePointerCapture(e.Pointer);
+                }
+                catch (ArgumentException)
+                {
+                }
+                catch (COMException)
+                {
+                }
+                UpdateCropBoundaryCursor(GetPreviewCanvasPoint(e));
+                e.Handled = true;
+                return;
+            }
+
+            if (previewPanning)
+            {
+                previewPanning = false;
+                ReleasePreviewPointerCapturesSafe();
+            }
+
             // End copyright dragging
             if (copyrightDragging)
             {
                 copyrightDragging = false;
                 // Note: Position is already updated in PointerMoved
+                if (!previewSessionOpen && IsCurrentSourceImageFile())
+                {
+                    _ = RefreshCurrentImagePreviewAsync();
+                }
             }
         }
 
-        private void DrawingCanvas_PointerWheelChanged(object sender, PointerRoutedEventArgs e)
+        private async void DrawingCanvas_PointerWheelChanged(object sender, PointerRoutedEventArgs e)
         {
+            if (isWindowClosing)
+            {
+                e.Handled = true;
+                return;
+            }
+
             bool isCtrlPressed = (e.KeyModifiers & Windows.System.VirtualKeyModifiers.Control) != 0;
-            if (!isCtrlPressed)
+            var properties = e.GetCurrentPoint(DrawingCanvas).Properties;
+            int wheelDelta = properties.MouseWheelDelta;
+            if (wheelDelta == 0)
             {
                 return;
             }
 
+            if (!isCtrlPressed)
+            {
+                var pointerPoint = GetPreviewContainerPoint(e);
+                double zoomFactor = wheelDelta > 0 ? 1.10 : 0.90;
+                ZoomPreviewAtPoint(pointerPoint, zoomFactor);
+                e.Handled = true;
+                return;
+            }
+
             bool canEditCopyright = previewSessionOpen ||
-                                    (PickAFileOutputTextBlock.Text?.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase) == true);
+                                    (PickAFileOutputTextBlock.Text?.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase) == true) ||
+                                    IsCurrentSourceImageFile();
             if (!canEditCopyright)
             {
                 return;
             }
 
-            // Zoom copyright image with mouse wheel
-            var properties = e.GetCurrentPoint(DrawingCanvas).Properties;
-            int wheelDelta = properties.MouseWheelDelta;
-
-            if (wheelDelta != 0)
+            if (!previewSessionOpen && IsCurrentSourceImageFile())
             {
-                // Update zoom scale (positive delta = zoom in, negative = zoom out)
-                double zoomFactor = wheelDelta > 0 ? 1.05 : 0.95;
-                copyrightZoomScale *= zoomFactor;
-
-                // Clamp zoom scale between 0.5 and 3.0
-                copyrightZoomScale = Math.Max(0.5, Math.Min(3.0, copyrightZoomScale));
-
-                // Notify native DLL about zoom change (if needed)
-                Debug.WriteLine($"Copyright zoom scale: {copyrightZoomScale:F2}");
-
-                if (previewSessionOpen)
+                bool opened = await EnsurePreviewSessionForCopyrightEditAsync();
+                if (!opened)
                 {
-                    _ = RefreshCurrentPreviewFrameIfPausedAsync();
+                    return;
                 }
-
-                e.Handled = true;
             }
+
+            // Zoom copyright image with Ctrl + mouse wheel
+            double copyrightZoomFactor = wheelDelta > 0 ? 1.05 : 0.95;
+            copyrightZoomScale *= copyrightZoomFactor;
+
+            // Clamp zoom scale between 0.5 and 3.0
+            copyrightZoomScale = Math.Max(0.5, Math.Min(3.0, copyrightZoomScale));
+
+            // Notify native DLL about zoom change (if needed)
+            Debug.WriteLine($"Copyright zoom scale: {copyrightZoomScale:F2}");
+
+            if (previewSessionOpen)
+            {
+                string resolvedPath = ResolveActiveCopyrightPath();
+                FrameProcessor.SetCopyrightImagePath(resolvedPath);
+                _ = PreviewSingleFrameAsync(previewFrameIndex, false);
+            }
+            else if (IsCurrentSourceImageFile())
+            {
+                _ = RefreshCurrentImagePreviewAsync();
+            }
+
+            e.Handled = true;
         }
 
         private async Task RefreshCurrentPreviewFrameIfPausedAsync()
@@ -4108,7 +5433,43 @@ namespace WoLNamesBlackedOut
 
         private void Add_Copyright_CheckedChanged(object sender, RoutedEventArgs e)
         {
-            _ = RefreshCurrentPreviewFrameIfPausedAsync();
+            if (previewSessionOpen)
+            {
+                string resolvedPath = ResolveActiveCopyrightPath();
+                FrameProcessor.SetCopyrightImagePath(resolvedPath);
+                _ = RefreshCurrentPreviewFrameIfPausedAsync();
+            }
+            else if (IsCurrentSourceImageFile())
+            {
+                _ = RefreshCurrentImagePreviewAsync();
+            }
+        }
+
+        private async void ProcessingPreviewEnabledCheckBox_CheckedChanged(object sender, RoutedEventArgs e)
+        {
+            if (isWindowClosing || !running_state)
+            {
+                return;
+            }
+
+            if (IsProcessingPreviewRequested())
+            {
+                await InitializeProcessingPreviewAsync(v_file_path, v_start_time);
+                TryScheduleProcessingPreviewUpdate();
+                return;
+            }
+
+            StopProcessingPreviewSession();
+        }
+
+        private void ProcessingPreviewIntervalSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
+        {
+            if (isWindowClosing || !running_state || !processingPreviewEnabled)
+            {
+                return;
+            }
+
+            TryScheduleProcessingPreviewUpdate();
         }
 
         private void ExcludeByNameEnabledCheckBox_CheckedChanged(object sender, RoutedEventArgs e)
@@ -4337,6 +5698,8 @@ namespace WoLNamesBlackedOut
                 Canvas.SetTop(rectangle, scaledRect.Y);
                 DrawingCanvas.Children.Add(rectangle);
             }
+
+            RedrawCropOverlay();
         }
         private void FixedFrame_color_icon_ColorChanged()
         {
@@ -4402,6 +5765,17 @@ namespace WoLNamesBlackedOut
             {
                 return;
             }
+
+            bool isVideoFile = !string.IsNullOrWhiteSpace(v_file_path)
+                && System.IO.Path.GetExtension(v_file_path).Equals(".mp4", StringComparison.OrdinalIgnoreCase);
+            if (!isVideoFile)
+            {
+                BlackedOutStartButton.IsEnabled = false;
+                ForX.IsEnabled = false;
+                ForX.IsChecked = false;
+                return;
+            }
+
             if (End_min.Value * 60 + End_sec.Value > Start_min.Value * 60 + Start_sec.Value)
             { 
                 BlackedOutStartButton.IsEnabled = true;

@@ -509,22 +509,51 @@ bool VideoPipeline::Initialize(const PipelineConfig& config) {
 
 	// エンコーダー設定（ForX時は横1280px・30fpsに固定）
 	int output_fps = config_.for_x ? 30 : config_.fps;
-	int output_width = decoder_ctx_->width;
-	int output_height = decoder_ctx_->height;
+	int source_width_for_output = decoder_ctx_->width;
+	int source_height_for_output = decoder_ctx_->height;
+
+	// 後処理クロップで出力解像度を縮小
+	const int crop_top = std::max(0, config_.crop_top);
+	const int crop_left = std::max(0, config_.crop_left);
+	const int crop_right = std::max(0, config_.crop_right);
+	const int crop_bottom = std::max(0, config_.crop_bottom);
+	const int cropped_width = source_width_for_output - crop_left - crop_right;
+	const int cropped_height = source_height_for_output - crop_top - crop_bottom;
+	if (cropped_width > 0 && cropped_height > 0 &&
+		(crop_top > 0 || crop_left > 0 || crop_right > 0 || crop_bottom > 0)) {
+		source_width_for_output = cropped_width;
+		source_height_for_output = cropped_height;
+		PipelineLogFmt("[VideoPipeline::Initialize] Crop enabled: T=%d L=%d R=%d B=%d -> output base %dx%d\n",
+			crop_top, crop_left, crop_right, crop_bottom, source_width_for_output, source_height_for_output);
+	}
+
+	int output_width = source_width_for_output;
+	int output_height = source_height_for_output;
 	if (config_.for_x) {
-		output_width = 1280;
-		if (decoder_ctx_->width > 0 && decoder_ctx_->height > 0) {
-			output_height = static_cast<int>(std::round(decoder_ctx_->height * 1280.0 / std::max(1, decoder_ctx_->width)));
-			if (output_height % 2 != 0) {
-				output_height += 1;
-			}
-			if (output_height < 2) {
-				output_height = 2;
-			}
+		if (source_width_for_output > 0 && source_height_for_output > 0) {
+			// X向け: 先にクロップした後、縦横とも1280以下になるよう縮小（必要時のみ）
+			double scale_w = 1280.0 / std::max(1, source_width_for_output);
+			double scale_h = 1280.0 / std::max(1, source_height_for_output);
+			double scale = std::min(1.0, std::min(scale_w, scale_h));
+
+			output_width = static_cast<int>(std::round(source_width_for_output * scale));
+			output_height = static_cast<int>(std::round(source_height_for_output * scale));
+			output_width = std::max(2, output_width);
+			output_height = std::max(2, output_height);
+
+			PipelineLogFmt("[VideoPipeline::Initialize] ForX output sizing: %dx%d -> %dx%d (scale=%.4f)\n",
+				source_width_for_output, source_height_for_output, output_width, output_height, scale);
 		} else {
+			output_width = 1280;
 			output_height = 720;
+			PipelineLog("[VideoPipeline::Initialize] ForX output fallback: 1280x720\n");
 		}
-		PipelineLog("[VideoPipeline::Initialize] ForX output override: 1280px wide, 30fps\n");
+	}
+	if ((output_width % 2) != 0) {
+		output_width = std::max(2, output_width - 1);
+	}
+	if ((output_height % 2) != 0) {
+		output_height = std::max(2, output_height - 1);
 	}
 	encoder_ctx_->width = output_width;
 	encoder_ctx_->height = output_height;
@@ -780,6 +809,13 @@ void VideoPipeline::Cleanup() {
 		detected_objects_ = 0;
 		elapsed_seconds_ = 0.0;
 		estimated_total_frames_ = 0;
+		{
+			std::lock_guard<std::mutex> preview_lock(latest_processed_preview_mutex_);
+			latest_processed_preview_bgra_.clear();
+			latest_processed_preview_width_ = 0;
+			latest_processed_preview_height_ = 0;
+		}
+		latest_processed_preview_frame_index_.store(-1);
 	}
 	catch (const winrt::hresult_error& ex) {
 		std::string msg = winrt::to_string(ex.message());
@@ -788,6 +824,36 @@ void VideoPipeline::Cleanup() {
 	catch (const std::exception& ex) {
 		PipelineLogFmt("[VideoPipeline] Cleanup exception: %s\n", ex.what());
 	}
+}
+
+bool VideoPipeline::TryCopyLatestProcessedPreviewFrame(uint8_t* out_bgra,
+	int buffer_size,
+	int& out_width,
+	int& out_height,
+	int& out_frame_index) const {
+	out_width = 0;
+	out_height = 0;
+	out_frame_index = -1;
+
+	if (!out_bgra || buffer_size <= 0) {
+		return false;
+	}
+
+	std::lock_guard<std::mutex> lock(latest_processed_preview_mutex_);
+	if (latest_processed_preview_bgra_.empty() || latest_processed_preview_width_ <= 0 || latest_processed_preview_height_ <= 0) {
+		return false;
+	}
+
+	const int required = latest_processed_preview_width_ * latest_processed_preview_height_ * 4;
+	if (required <= 0 || required > buffer_size || static_cast<size_t>(required) > latest_processed_preview_bgra_.size()) {
+		return false;
+	}
+
+	memcpy(out_bgra, latest_processed_preview_bgra_.data(), static_cast<size_t>(required));
+	out_width = latest_processed_preview_width_;
+	out_height = latest_processed_preview_height_;
+	out_frame_index = latest_processed_preview_frame_index_.load();
+	return true;
 }
 
 void VideoPipeline::DecodeThread() {
@@ -1597,15 +1663,38 @@ void VideoPipeline::EncodeThread() {
 			uint32_t target_w = std::max<uint32_t>(1, static_cast<uint32_t>(std::round(copyright_width_ * scale)));
 			uint32_t target_h = std::max<uint32_t>(1, static_cast<uint32_t>(std::round(copyright_height_ * scale)));
 			if (target_w > 0 && target_h > 0) {
-				// Copyright position based on the ORIGINAL frame size (same as preview)
-				// with configurable offset from config_
-				const int frame_w_i = static_cast<int>(frame.width);
-				const int frame_h_i = static_cast<int>(frame.height);
-				int pos_x = frame_w_i - static_cast<int>(target_w) + config_.copyright_offset_x;
-				int pos_y = frame_h_i - static_cast<int>(target_h) + config_.copyright_offset_y;
+			// PreviewPipeline は codec parameters ベースのサイズで座標計算しているため、
+			// こちらも同じ基準を優先して位置ズレを抑える。
+			int base_w = 0;
+			int base_h = 0;
 
-				const int max_x = frame_w_i - static_cast<int>(target_w);
-				const int max_y = frame_h_i - static_cast<int>(target_h);
+			if (input_format_ctx_ && video_stream_index_ >= 0 &&
+				video_stream_index_ < static_cast<int>(input_format_ctx_->nb_streams)) {
+				AVStream* in_stream = input_format_ctx_->streams[video_stream_index_];
+				if (in_stream && in_stream->codecpar) {
+					base_w = in_stream->codecpar->width;
+					base_h = in_stream->codecpar->height;
+				}
+			}
+
+			if (base_w <= 0 || base_h <= 0) {
+				base_w = (decoder_ctx_ && decoder_ctx_->width > 0)
+					? decoder_ctx_->width
+					: static_cast<int>(frame.width);
+				base_h = (decoder_ctx_ && decoder_ctx_->height > 0)
+					? decoder_ctx_->height
+					: static_cast<int>(frame.height);
+			}
+
+			// テクスチャ実寸より大きい基準値は適用時に不正になるため、上限を揃える。
+			base_w = std::max(1, std::min(base_w, static_cast<int>(tex_desc.Width)));
+			base_h = std::max(1, std::min(base_h, static_cast<int>(tex_desc.Height)));
+
+			int pos_x = base_w - static_cast<int>(target_w) + config_.copyright_offset_x;
+			int pos_y = base_h - static_cast<int>(target_h) + config_.copyright_offset_y;
+
+			const int max_x = base_w - static_cast<int>(target_w);
+			const int max_y = base_h - static_cast<int>(target_h);
 				pos_x = std::max(0, std::min(pos_x, std::max(0, max_x)));
 				pos_y = std::max(0, std::min(pos_y, std::max(0, max_y)));
 
@@ -1619,6 +1708,88 @@ void VideoPipeline::EncodeThread() {
 					pos_y,
 					watermark_output) && watermark_output.Get()) {
 					copyright_texture = watermark_output;
+				}
+			}
+		}
+
+		// Apply post-processing crop (after mask/copyright)
+		auto encoded_source_texture = copyright_texture;
+		if (encoded_source_texture.Get()) {
+			D3D11_TEXTURE2D_DESC src_desc = {};
+			encoded_source_texture->GetDesc(&src_desc);
+
+			int crop_top = std::max(0, config_.crop_top);
+			int crop_left = std::max(0, config_.crop_left);
+			int crop_right = std::max(0, config_.crop_right);
+			int crop_bottom = std::max(0, config_.crop_bottom);
+
+			if (crop_top > 0 || crop_left > 0 || crop_right > 0 || crop_bottom > 0) {
+				int src_w = static_cast<int>(src_desc.Width);
+				int src_h = static_cast<int>(src_desc.Height);
+				int cropped_w = src_w - crop_left - crop_right;
+				int cropped_h = src_h - crop_top - crop_bottom;
+				if (cropped_w > 0 && cropped_h > 0) {
+					D3D11_TEXTURE2D_DESC cropped_desc = src_desc;
+					cropped_desc.Width = static_cast<UINT>(cropped_w);
+					cropped_desc.Height = static_cast<UINT>(cropped_h);
+
+					Microsoft::WRL::ComPtr<ID3D11Texture2D> cropped_texture;
+					HRESULT crop_hr = device_manager_.GetDevice()->CreateTexture2D(
+						&cropped_desc, nullptr, cropped_texture.ReleaseAndGetAddressOf());
+					if (SUCCEEDED(crop_hr) && cropped_texture.Get()) {
+						D3D11_BOX src_box = {};
+						src_box.left = static_cast<UINT>(crop_left);
+						src_box.top = static_cast<UINT>(crop_top);
+						src_box.front = 0;
+						src_box.right = static_cast<UINT>(crop_left + cropped_w);
+						src_box.bottom = static_cast<UINT>(crop_top + cropped_h);
+						src_box.back = 1;
+						device_manager_.GetContext()->CopySubresourceRegion(
+							cropped_texture.Get(), 0, 0, 0, 0,
+							encoded_source_texture.Get(), 0, &src_box);
+						encoded_source_texture = cropped_texture;
+					}
+				}
+			}
+		}
+
+		if (encoded_source_texture.Get()) {
+			D3D11_TEXTURE2D_DESC preview_desc = {};
+			encoded_source_texture->GetDesc(&preview_desc);
+
+			if (preview_desc.Width > 0 && preview_desc.Height > 0) {
+				D3D11_TEXTURE2D_DESC staging_desc = preview_desc;
+				staging_desc.Usage = D3D11_USAGE_STAGING;
+				staging_desc.BindFlags = 0;
+				staging_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+				staging_desc.MiscFlags = 0;
+
+				Microsoft::WRL::ComPtr<ID3D11Texture2D> preview_staging;
+				HRESULT preview_hr = device_manager_.GetDevice()->CreateTexture2D(&staging_desc, nullptr, preview_staging.ReleaseAndGetAddressOf());
+				if (SUCCEEDED(preview_hr) && preview_staging.Get()) {
+					device_manager_.GetContext()->CopyResource(preview_staging.Get(), encoded_source_texture.Get());
+					D3D11_MAPPED_SUBRESOURCE mapped = {};
+					preview_hr = device_manager_.GetContext()->Map(preview_staging.Get(), 0, D3D11_MAP_READ, 0, &mapped);
+					if (SUCCEEDED(preview_hr) && mapped.pData) {
+						const int preview_width = static_cast<int>(preview_desc.Width);
+						const int preview_height = static_cast<int>(preview_desc.Height);
+						const int row_bytes = preview_width * 4;
+						std::vector<uint8_t> preview_bgra(static_cast<size_t>(preview_height) * static_cast<size_t>(row_bytes));
+						for (int y = 0; y < preview_height; ++y) {
+							const uint8_t* src = static_cast<const uint8_t*>(mapped.pData) + static_cast<size_t>(y) * mapped.RowPitch;
+							uint8_t* dst = preview_bgra.data() + static_cast<size_t>(y) * row_bytes;
+							memcpy(dst, src, static_cast<size_t>(row_bytes));
+						}
+						device_manager_.GetContext()->Unmap(preview_staging.Get(), 0);
+
+						{
+							std::lock_guard<std::mutex> preview_lock(latest_processed_preview_mutex_);
+							latest_processed_preview_bgra_.swap(preview_bgra);
+							latest_processed_preview_width_ = preview_width;
+							latest_processed_preview_height_ = preview_height;
+						}
+						latest_processed_preview_frame_index_.store(encoded_count);
+					}
 				}
 			}
 		}
@@ -1671,7 +1842,7 @@ void VideoPipeline::EncodeThread() {
 			}
 
 			// D3D11VideoProcessorでBGRA→NV12変換（GPUハードウェア）
-			if (!device_manager_.ConvertBGRAToNV12(copyright_texture.Get(), nv12_texture)) {
+			if (!device_manager_.ConvertBGRAToNV12(encoded_source_texture.Get(), nv12_texture)) {
 				PipelineLog("[EncodeThread] D3D11VideoProcessor conversion failed, skipping frame\n");
 				av_frame_free(&hw_frame);
 				continue;
@@ -1694,7 +1865,7 @@ void VideoPipeline::EncodeThread() {
 			Microsoft::WRL::ComPtr<ID3D11Texture2D> nv12_y;
 			Microsoft::WRL::ComPtr<ID3D11Texture2D> nv12_uv;
 			bool gpu_convert_ok = mask_shader_.ConvertBGRAToNV12(
-				copyright_texture.Get(), enc_w, enc_h, nv12_y, nv12_uv);
+				encoded_source_texture.Get(), enc_w, enc_h, nv12_y, nv12_uv);
 
 			if (!gpu_convert_ok || !nv12_y.Get() || !nv12_uv.Get()) {
 				PipelineLog("[EncodeThread] GPU BGRA→NV12 conversion failed, skipping frame\n");

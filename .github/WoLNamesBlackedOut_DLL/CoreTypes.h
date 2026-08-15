@@ -156,6 +156,12 @@ namespace WoLNamesBlackedOut::Core {
 		int fixed_rect_count;
 		RectInfo fixed_rects[64];
 
+		// クロップ設定（後処理）
+		int crop_top;
+		int crop_left;
+		int crop_right;
+		int crop_bottom;
+
 		// 透かし設定
 		bool enable_copyright;
 		const wchar_t* copyright_image_path;
@@ -182,6 +188,7 @@ namespace WoLNamesBlackedOut::Core {
 			  name_color(), fixframe_color(),
 			  fixmask_type(MaskType::RectFill), fixmask_param(3),
 			  fixed_rect_count(0),
+			  crop_top(0), crop_left(0), crop_right(0), crop_bottom(0),
 			  enable_copyright(false), copyright_image_path(nullptr),
 			  copyright_offset_x(0), copyright_offset_y(0), copyright_scale(1.0f),
 			  exclude_by_name_enabled(false),
