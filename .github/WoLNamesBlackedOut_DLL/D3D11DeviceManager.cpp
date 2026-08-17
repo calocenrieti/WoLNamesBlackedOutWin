@@ -4,6 +4,67 @@
 #include <iostream>
 #include <exception>
 #include <algorithm>
+#include <dxgi1_6.h>
+
+static Microsoft::WRL::ComPtr<IDXGIAdapter1> SelectHighPerformanceAdapter() {
+	Microsoft::WRL::ComPtr<IDXGIFactory1> factory;
+	if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) {
+		return nullptr;
+	}
+
+	Microsoft::WRL::ComPtr<IDXGIAdapter1> selectedAdapter;
+	SIZE_T largestDedicatedVideoMemory = 0;
+
+	Microsoft::WRL::ComPtr<IDXGIFactory6> factory6;
+	if (SUCCEEDED(factory.As(&factory6))) {
+		for (UINT index = 0; ; ++index) {
+			Microsoft::WRL::ComPtr<IDXGIAdapter1> candidate;
+			HRESULT hr = factory6->EnumAdapterByGpuPreference(
+				index,
+				DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
+				IID_PPV_ARGS(&candidate));
+			if (hr == DXGI_ERROR_NOT_FOUND) {
+				break;
+			}
+			if (FAILED(hr)) {
+				continue;
+			}
+
+			DXGI_ADAPTER_DESC1 desc = {};
+			if (SUCCEEDED(candidate->GetDesc1(&desc)) &&
+				(desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) == 0 &&
+				desc.DedicatedVideoMemory > largestDedicatedVideoMemory) {
+				largestDedicatedVideoMemory = desc.DedicatedVideoMemory;
+				selectedAdapter = candidate;
+			}
+		}
+	}
+
+	if (selectedAdapter) {
+		return selectedAdapter;
+	}
+
+	for (UINT index = 0; ; ++index) {
+		Microsoft::WRL::ComPtr<IDXGIAdapter1> candidate;
+		HRESULT hr = factory->EnumAdapters1(index, &candidate);
+		if (hr == DXGI_ERROR_NOT_FOUND) {
+			break;
+		}
+		if (FAILED(hr)) {
+			continue;
+		}
+
+		DXGI_ADAPTER_DESC1 desc = {};
+		if (SUCCEEDED(candidate->GetDesc1(&desc)) &&
+			(desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) == 0 &&
+			desc.DedicatedVideoMemory > largestDedicatedVideoMemory) {
+			largestDedicatedVideoMemory = desc.DedicatedVideoMemory;
+			selectedAdapter = candidate;
+		}
+	}
+
+	return selectedAdapter;
+}
 
 // DXGIアダプターからGPU情報を取得
 static WoLNamesBlackedOut::Core::GpuVendor DetectGpuVendor(IDXGIAdapter* adapter) {
@@ -78,6 +139,16 @@ bool D3D11DeviceManager::Initialize(D3D_DRIVER_TYPE device_type, IDXGIAdapter* a
 		Release();
 	}
 
+	Microsoft::WRL::ComPtr<IDXGIAdapter1> preferredAdapter;
+	IDXGIAdapter* effectiveAdapter = adapter;
+	if (!effectiveAdapter && device_type == D3D_DRIVER_TYPE_HARDWARE) {
+		preferredAdapter = SelectHighPerformanceAdapter();
+		effectiveAdapter = preferredAdapter.Get();
+	}
+	const D3D_DRIVER_TYPE effectiveDeviceType = effectiveAdapter
+		? D3D_DRIVER_TYPE_UNKNOWN
+		: device_type;
+
 	UINT createFlags = 0;
 #ifdef _DEBUG
 	createFlags |= D3D11_CREATE_DEVICE_DEBUG;
@@ -94,8 +165,8 @@ bool D3D11DeviceManager::Initialize(D3D_DRIVER_TYPE device_type, IDXGIAdapter* a
 	};
 
 	HRESULT hr = D3D11CreateDevice(
-		adapter,
-		device_type,
+		effectiveAdapter,
+		effectiveDeviceType,
 		nullptr,
 		createFlags,
 		featureLevels,
@@ -112,7 +183,7 @@ bool D3D11DeviceManager::Initialize(D3D_DRIVER_TYPE device_type, IDXGIAdapter* a
 	}
 
 	// GPU情報を取得
-	dxgi_adapter_ = adapter;
+	dxgi_adapter_ = effectiveAdapter;
 	if (!dxgi_adapter_) {
 		Microsoft::WRL::ComPtr<IDXGIDevice> dxgiDevice;
 		if (SUCCEEDED(d3d11_device_.As(&dxgiDevice)) && dxgiDevice.Get()) {

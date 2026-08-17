@@ -35,7 +35,7 @@ public:
 	/**
 	 * @brief D3D11デバイスの作成とFFmpeg用HWコンテキストの初期化
 	 * @param device_type グラフィックデバイスタイプ (通常 D3D_DRIVER_TYPE_HARDWARE)
-	 * @param adapter アダプターポインター (nullptrで既定のGPU)
+	 * @param adapter アダプターポインター (nullptrで高性能dGPUを優先選択)
 	 * @return 初期化成功時 true
 	 */
 	bool Initialize(D3D_DRIVER_TYPE device_type = D3D_DRIVER_TYPE_HARDWARE, 
