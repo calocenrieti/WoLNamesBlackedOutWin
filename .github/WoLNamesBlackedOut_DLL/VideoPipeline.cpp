@@ -831,6 +831,8 @@ bool VideoPipeline::TryCopyLatestProcessedPreviewFrame(uint8_t* out_bgra,
 	int& out_width,
 	int& out_height,
 	int& out_frame_index) const {
+	latest_processed_preview_pull_tick_ms_.store(GetTickCount64(), std::memory_order_relaxed);
+
 	out_width = 0;
 	out_height = 0;
 	out_frame_index = -1;
@@ -1754,6 +1756,11 @@ void VideoPipeline::EncodeThread() {
 		}
 
 		if (encoded_source_texture.Get()) {
+			const ULONGLONG last_preview_pull_ms = latest_processed_preview_pull_tick_ms_.load(std::memory_order_relaxed);
+			const ULONGLONG now_ms = GetTickCount64();
+			const bool keep_preview_updated = (last_preview_pull_ms > 0) && (now_ms >= last_preview_pull_ms) && ((now_ms - last_preview_pull_ms) <= 2500);
+
+			if (keep_preview_updated) {
 			D3D11_TEXTURE2D_DESC preview_desc = {};
 			encoded_source_texture->GetDesc(&preview_desc);
 
@@ -1791,6 +1798,7 @@ void VideoPipeline::EncodeThread() {
 						latest_processed_preview_frame_index_.store(encoded_count);
 					}
 				}
+			}
 			}
 		}
 

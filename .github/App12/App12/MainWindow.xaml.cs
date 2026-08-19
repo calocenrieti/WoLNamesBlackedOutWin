@@ -577,6 +577,9 @@ namespace WoLNamesBlackedOut
         private bool processingPreviewUpdateBusy = false;
         private long processingPreviewLastUpdateMs = 0;
         private int processingPreviewFrameOffset = 0;
+        private readonly Dictionary<string, double> blackedOutMaskParamCache = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, double> fixedFrameMaskParamCache = new(StringComparer.Ordinal);
+        private bool suppressMaskSliderValueChangedEvent = false;
 
         // Copyright overlay interaction state
         private int copyrightOffsetX = 0;
@@ -1328,6 +1331,7 @@ namespace WoLNamesBlackedOut
             OptimizationModeComboBox.SelectedIndex = 3;
             ConfigureMaskSliderForType(BlackedOutSlideBar, GetComboText(BlackedOut_ComboBox, "Solid"));
             ConfigureMaskSliderForType(FixedFrameSlideBar, GetComboText(FixedFrame_ComboBox, "Solid"));
+            InitializeMaskSliderCaches();
             StartupTrace("ctor:after settings");
 
             // AppDataのパスを取得
@@ -1845,24 +1849,84 @@ namespace WoLNamesBlackedOut
             return value == "Mosaic" || value == "Blur" || value == "Inpaint";
         }
 
-        private void ConfigureMaskSliderForType(Slider slider, string value)
+        private static string? TryGetMaskTypeFromSelectionItem(object item)
+        {
+            if (item is ComboBoxItem comboBoxItem)
+            {
+                return comboBoxItem.Content?.ToString();
+            }
+
+            return item?.ToString();
+        }
+
+        private static double GetDefaultSliderValueForMaskType(string value)
+        {
+            return value == "Inpaint" ? 70 : 3;
+        }
+
+        private static void RememberMaskSliderValue(Dictionary<string, double> cache, string value, Slider slider)
+        {
+            if (!IsSliderMaskType(value))
+            {
+                return;
+            }
+
+            cache[value] = Math.Clamp(slider.Value, slider.Minimum, slider.Maximum);
+        }
+
+        private void InitializeMaskSliderCaches()
+        {
+            blackedOutMaskParamCache.Clear();
+            fixedFrameMaskParamCache.Clear();
+
+            foreach (string maskType in new[] { "Mosaic", "Blur", "Inpaint" })
+            {
+                blackedOutMaskParamCache[maskType] = GetDefaultSliderValueForMaskType(maskType);
+                fixedFrameMaskParamCache[maskType] = GetDefaultSliderValueForMaskType(maskType);
+            }
+
+            string blackedType = GetComboText(BlackedOut_ComboBox, "Solid");
+            if (IsSliderMaskType(blackedType) && BlackedOutSlideBar != null)
+            {
+                blackedOutMaskParamCache[blackedType] = Math.Clamp(BlackedOutSlideBar.Value, BlackedOutSlideBar.Minimum, BlackedOutSlideBar.Maximum);
+            }
+
+            string fixedType = GetComboText(FixedFrame_ComboBox, "Solid");
+            if (IsSliderMaskType(fixedType) && FixedFrameSlideBar != null)
+            {
+                fixedFrameMaskParamCache[fixedType] = Math.Clamp(FixedFrameSlideBar.Value, FixedFrameSlideBar.Minimum, FixedFrameSlideBar.Maximum);
+            }
+        }
+
+        private void ConfigureMaskSliderForType(Slider slider, string value, double? preferredValue = null)
         {
             if (value == "Inpaint")
             {
                 slider.Minimum = 1;
                 slider.Maximum = 200;
-                if (slider.Value <= 5)
-                {
-                    slider.Value = 70;
-                }
-                return;
+            }
+            else
+            {
+                slider.Minimum = 1;
+                slider.Maximum = 5;
             }
 
-            slider.Minimum = 1;
-            slider.Maximum = 5;
-            if (slider.Value > slider.Maximum)
+            double valueToApply = preferredValue ?? (value == "Inpaint" && slider.Value <= 5
+                ? 70
+                : slider.Value);
+
+            double clampedValue = Math.Clamp(valueToApply, slider.Minimum, slider.Maximum);
+            if (Math.Abs(slider.Value - clampedValue) > double.Epsilon)
             {
-                slider.Value = slider.Maximum;
+                suppressMaskSliderValueChangedEvent = true;
+                try
+                {
+                    slider.Value = clampedValue;
+                }
+                finally
+                {
+                    suppressMaskSliderValueChangedEvent = false;
+                }
             }
         }
 
@@ -4312,19 +4376,20 @@ namespace WoLNamesBlackedOut
                             new HyperlinkButton { Content = "Microsoft.Windows.AI.MachineLearning 2.2.12", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.Windows.AI.MachineLearning/2.2.12/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "Microsoft.Windows.CppWinRT 3.0.260715.1", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.Windows.CppWinRT/3.0.260715.1/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             //c#
+                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK 2.4.0", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK/2.4.0/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "Microsoft.Windows.SDK.BuildTools 10.0.28000.2526", NavigateUri = new Uri("https://aka.ms/WinSDKLicenseURL"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK 2.3.1", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK/2.3.1/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "Microsoft.Windows.SDK.BuildTools.MSI 1.7.20250829.1", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsSDK.BuildTools.MSIX/1.7.20250829.1/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.Windows.SDK.BuildTools.MSIX 1.7.251221100", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsSDK.BuildTools.MSIX/1.7.251221100/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "Microsoft.Windows.AI.MachineLearning 2.1.74", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.Windows.AI.MachineLearning/2.1.74/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.AI 2.3.4", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.AI/2.3.4/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.AI 2.4.4", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.AI/2.4.4/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.Base 2.0.4", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.Base/2.0.4/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.DWrite 2.1.0", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.DWrite/2.1.0/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.Foundation 2.3.5", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.Foundation/2.3.5/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.InteractiveExperien 2.1.3", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.InteractiveExperiences/2.1.3/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.Foundation 2.3.9", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.Foundation/2.3.9/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.InteractiveExperien 2.1.6", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.InteractiveExperiences/2.1.6/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.ML 2.1.74", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.ML/2.1.74/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.Runtime 2.3.1", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.Runtime/2.3.1/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.Runtime 2.4.0", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.Runtime/2.4.0/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.Search 2.4.4", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.Search/2.4.4/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.Widgets 2.0.5", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.Widgets/2.0.5/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.WinUI 2.3.0", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.WinUI/2.3.0/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.WinUI 2.3.6", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.WinUI/2.3.6/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "Microsoft.Web.WebView2 1.0.4129.50", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.Web.WebView2/1.0.4129.50/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "System.Numerics.Tensors 9.0.0", NavigateUri = new Uri("https://licenses.nuget.org/MIT"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             //model
@@ -4838,6 +4903,8 @@ namespace WoLNamesBlackedOut
 
         private async void BlackedOutStartButton_Checked(object sender, RoutedEventArgs e)
         {
+            InfoBar.IsOpen = false;
+
             if (suppressBlackedOutToggleEvent)
             {
                 return;
@@ -5428,6 +5495,22 @@ namespace WoLNamesBlackedOut
 
         private void PreviewMaskSetting_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
         {
+            if (suppressMaskSliderValueChangedEvent)
+            {
+                return;
+            }
+
+            if (sender == BlackedOutSlideBar)
+            {
+                string blackedType = GetComboText(BlackedOut_ComboBox, "Solid");
+                RememberMaskSliderValue(blackedOutMaskParamCache, blackedType, BlackedOutSlideBar);
+            }
+            else if (sender == FixedFrameSlideBar)
+            {
+                string fixedType = GetComboText(FixedFrame_ComboBox, "Solid");
+                RememberMaskSliderValue(fixedFrameMaskParamCache, fixedType, FixedFrameSlideBar);
+            }
+
             _ = RefreshCurrentPreviewFrameIfPausedAsync();
         }
 
@@ -5711,7 +5794,21 @@ namespace WoLNamesBlackedOut
             string value = GetComboText(BlackedOut_ComboBox, "Solid");
             if (BlackedOut_color != null && BlackedOutSlideBar != null)
             {
-                ConfigureMaskSliderForType(BlackedOutSlideBar, value);
+                if (e.RemovedItems.Count > 0)
+                {
+                    string? previousValue = TryGetMaskTypeFromSelectionItem(e.RemovedItems[0]);
+                    if (!string.IsNullOrWhiteSpace(previousValue))
+                    {
+                        RememberMaskSliderValue(blackedOutMaskParamCache, previousValue, BlackedOutSlideBar);
+                    }
+                }
+
+                double? rememberedValue = blackedOutMaskParamCache.TryGetValue(value, out double cachedValue)
+                    ? cachedValue
+                    : null;
+                ConfigureMaskSliderForType(BlackedOutSlideBar, value, rememberedValue);
+                RememberMaskSliderValue(blackedOutMaskParamCache, value, BlackedOutSlideBar);
+
                 if (value == "Solid")
                 {
                     BlackedOut_color.Visibility = Visibility.Visible;
@@ -5737,7 +5834,21 @@ namespace WoLNamesBlackedOut
             string value = GetComboText(FixedFrame_ComboBox, "Solid");
             if (FixedFrame_color != null && FixedFrameSlideBar != null)
             {
-                ConfigureMaskSliderForType(FixedFrameSlideBar, value);
+                if (e.RemovedItems.Count > 0)
+                {
+                    string? previousValue = TryGetMaskTypeFromSelectionItem(e.RemovedItems[0]);
+                    if (!string.IsNullOrWhiteSpace(previousValue))
+                    {
+                        RememberMaskSliderValue(fixedFrameMaskParamCache, previousValue, FixedFrameSlideBar);
+                    }
+                }
+
+                double? rememberedValue = fixedFrameMaskParamCache.TryGetValue(value, out double cachedValue)
+                    ? cachedValue
+                    : null;
+                ConfigureMaskSliderForType(FixedFrameSlideBar, value, rememberedValue);
+                RememberMaskSliderValue(fixedFrameMaskParamCache, value, FixedFrameSlideBar);
+
                 if (value == "Solid")
                 {
                     FixedFrame_color.Visibility = Visibility.Visible;

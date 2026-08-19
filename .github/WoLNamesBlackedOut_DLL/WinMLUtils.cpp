@@ -83,6 +83,38 @@ std::string BuildWinMLSessionCacheKey(const wchar_t* model_path, WoLNamesBlacked
 	return key;
 }
 
+bool IsDiscreteD3D11Device(ID3D11Device* device) {
+	if (!device) {
+		return false;
+	}
+
+	Microsoft::WRL::ComPtr<IDXGIDevice> dxgi_device;
+	if (FAILED(device->QueryInterface(IID_PPV_ARGS(&dxgi_device))) || !dxgi_device) {
+		return false;
+	}
+
+	Microsoft::WRL::ComPtr<IDXGIAdapter> adapter;
+	if (FAILED(dxgi_device->GetAdapter(&adapter)) || !adapter) {
+		return false;
+	}
+
+	Microsoft::WRL::ComPtr<IDXGIAdapter1> adapter1;
+	if (FAILED(adapter.As(&adapter1)) || !adapter1) {
+		return false;
+	}
+
+	DXGI_ADAPTER_DESC1 desc{};
+	if (FAILED(adapter1->GetDesc1(&desc))) {
+		return false;
+	}
+
+	if ((desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0) {
+		return false;
+	}
+
+	return desc.DedicatedVideoMemory > 0;
+}
+
 // 外部から設定された状態通知コールバック
 StatusCallback g_status_callback = nullptr;
 std::mutex g_status_callback_mutex;
@@ -448,112 +480,156 @@ bool WinMLUtils::LoadModel(const wchar_t* model_path) {
 			return false;
 		};
 
-		// GPUベンダーに応じたEP優先順位で選択（WinML 2.x 推奨EP名）
-		// カタログEP（NvTensorRTRTX/MIGraphX/OpenVINO）は EnsureEpReady + AppendExecutionProvider_V2 が必要
-		// 組み込みEP（DML/CUDA/TensorRT）は従来のAppendExecutionProvider APIを使用
+		// dGPU -> NPU -> CPU の順でフォールバック。
+		// カタログEP（NvTensorRTRTX/MIGraphX/OpenVINO/QNN/VitisAI）は EnsureEpReady + AppendExecutionProvider_V2 を使用。
+		// 組み込みEP（DirectML）は DML2 デバイスフィルタを使用。
 		std::string selected_ep;
 		std::string ep_reason;
 		bool ep_appended = false;
-		switch (gpu_vendor_) {
-		case GpuVendor::NVIDIA: {
-			// NvTensorRTRTX EPの最適化オプション
-			// YOLOv8固定サイズ(1x3x640x640)の最適化プロファイル + ワークスペース + ランタイムキャッシュ
-			std::unordered_map<std::string, std::string> trt_rtx_options = {
-				{"nv_profile_min_shapes", "images:1x3x736x1280"},
-				{"nv_profile_max_shapes", "images:1x3x736x1280"},
-				{"nv_profile_opt_shapes", "images:1x3x736x1280"},
-				{"nv_max_workspace_size", "4294967296"},  // 4GB
-			};
-			// ランタイムキャッシュディレクトリを設定（JITカーネルキャッシュ）
-			// パッケージアプリ対応: LocalFolderを使用（書き込み可能なアプリデータ領域）
-			std::string cache_path_str;
-			try {
-				auto local_folder = winrt::Windows::Storage::ApplicationData::Current().LocalFolder();
-				std::wstring cache_path_w = local_folder.Path().c_str();
-				cache_path_w += L"\\trt_rtx_cache";
-				CreateDirectoryW(cache_path_w.c_str(), nullptr);
-				// UTF-16 -> UTF-8 変換
-				int utf8_len = WideCharToMultiByte(CP_UTF8, 0, cache_path_w.c_str(), -1, nullptr, 0, nullptr, nullptr);
-				if (utf8_len > 0) {
-					cache_path_str.resize(utf8_len - 1);
-					WideCharToMultiByte(CP_UTF8, 0, cache_path_w.c_str(), -1, cache_path_str.data(), utf8_len, nullptr, nullptr);
-				}
-				trt_rtx_options["nv_runtime_cache_path"] = cache_path_str;
-				char dbg[512];
-				snprintf(dbg, sizeof(dbg), "[WinMLUtils] TensorRT-RTX runtime cache (LocalFolder): %s\n", cache_path_str.c_str());
-				OutputDebugStringA(dbg);
-			} catch (...) {
-				// WinRT APIが使えない場合は従来のパスにフォールバック
-				char cache_path[MAX_PATH];
-				if (GetModuleFileNameA(nullptr, cache_path, MAX_PATH)) {
-					char* last_slash = strrchr(cache_path, '\\');
-					if (last_slash) {
-						*(last_slash + 1) = '\0';
-						strcat_s(cache_path, sizeof(cache_path), "trt_rtx_cache");
-						CreateDirectoryA(cache_path, nullptr);
-						trt_rtx_options["nv_runtime_cache_path"] = std::string(cache_path);
-						char dbg[512];
-						snprintf(dbg, sizeof(dbg), "[WinMLUtils] TensorRT-RTX runtime cache (fallback): %s\n", cache_path);
-						OutputDebugStringA(dbg);
-					}
-				}
+		auto try_append_dml = [&](OrtDmlDeviceFilter filter, const char* ep_name, const char* reason) -> bool {
+			if (!has_ep("DmlExecutionProvider")) {
+				return false;
 			}
-			if (try_append_catalog_ep("NvTensorRTRTXExecutionProvider", trt_rtx_options)) {
-				selected_ep = "TensorRT-RTX";
-				ep_reason = "NVIDIA GPU: TensorRT-RTX selected (profile shapes + 4GB workspace + runtime cache)";
-				ep_appended = true;
-			} else if (has_ep("DmlExecutionProvider")) {
-				selected_ep = "DmlExecutionProvider";
-				ep_reason = "NVIDIA GPU: DirectML selected (TensorRT-RTX not available)";
-			}
-			break;
-		}
-		case GpuVendor::AMD:
-			if (try_append_catalog_ep("MIGraphXExecutionProvider")) {
-				selected_ep = "MIGraphXExecutionProvider";
-				ep_reason = "AMD GPU: MIGraphX selected";
-				ep_appended = true;
-			} else if (has_ep("DmlExecutionProvider")) {
-				selected_ep = "DmlExecutionProvider";
-				ep_reason = "AMD GPU: DirectML selected (MIGraphX not available)";
-			}
-			break;
-		case GpuVendor::Intel:
-			if (try_append_catalog_ep("OpenVINOExecutionProvider")) {
-				selected_ep = "OpenVINOExecutionProvider";
-				ep_reason = "Intel GPU: OpenVINO selected";
-				ep_appended = true;
-			} else if (has_ep("DmlExecutionProvider")) {
-				selected_ep = "DmlExecutionProvider";
-				ep_reason = "Intel GPU: DirectML selected (OpenVINO not available)";
-			}
-			break;
-		default:
-			if (has_ep("DmlExecutionProvider")) {
-				selected_ep = "DmlExecutionProvider";
-				ep_reason = "Unknown GPU: DirectML selected";
-			}
-			break;
-		}
 
-		// 組み込みEPの追加（カタログEPは try_append_catalog_ep で既に追加済み）
-		if (!selected_ep.empty() && !ep_appended) {
 			try {
-				if (selected_ep == "DmlExecutionProvider") {
-					const OrtDmlApi* dml_api = nullptr;
-					Ort::ThrowOnError(Ort::GetApi().GetExecutionProviderApi("DML", ORT_API_VERSION, reinterpret_cast<const void**>(&dml_api)));
-					OrtDmlDeviceOptions device_options;
-					device_options.Preference = OrtDmlPerformancePreference::HighPerformance;
-					device_options.Filter = OrtDmlDeviceFilter::Gpu;
-					Ort::ThrowOnError(dml_api->SessionOptionsAppendExecutionProvider_DML2(session_options, &device_options));
-					ep_appended = true;
+				const OrtDmlApi* dml_api = nullptr;
+				Ort::ThrowOnError(Ort::GetApi().GetExecutionProviderApi("DML", ORT_API_VERSION, reinterpret_cast<const void**>(&dml_api)));
+				if (dml_api == nullptr) {
+					return false;
 				}
+
+				OrtDmlDeviceOptions device_options;
+				device_options.Preference = OrtDmlPerformancePreference::HighPerformance;
+				device_options.Filter = filter;
+				Ort::ThrowOnError(dml_api->SessionOptionsAppendExecutionProvider_DML2(session_options, &device_options));
+				selected_ep = ep_name;
+				ep_reason = reason;
+				ep_appended = true;
+				return true;
 			}
 			catch (const Ort::Exception& ex) {
 				char dbg[512];
-				snprintf(dbg, sizeof(dbg), "[WinMLUtils] Failed to append %s: %s\n", selected_ep.c_str(), ex.what());
+				snprintf(dbg, sizeof(dbg), "[WinMLUtils] Failed to append %s: %s\n", ep_name, ex.what());
 				OutputDebugStringA(dbg);
+				return false;
 			}
+		};
+
+		auto try_append_npu_catalog_ep = [&]() -> bool {
+			if (try_append_catalog_ep("QNNExecutionProvider")) {
+				selected_ep = "QNNExecutionProvider";
+				ep_reason = "NPU: QNN selected";
+				ep_appended = true;
+				return true;
+			}
+
+			if (try_append_catalog_ep("VitisAIExecutionProvider")) {
+				selected_ep = "VitisAIExecutionProvider";
+				ep_reason = "NPU: VitisAI selected";
+				ep_appended = true;
+				return true;
+			}
+
+			if (try_append_catalog_ep("OpenVINOExecutionProvider")) {
+				selected_ep = "OpenVINOExecutionProvider";
+				ep_reason = "NPU: OpenVINO selected";
+				ep_appended = true;
+				return true;
+			}
+
+			return false;
+		};
+
+		const bool has_discrete_gpu = IsDiscreteD3D11Device(device_.Get());
+		if (has_discrete_gpu) {
+			ReportStatus("Trying dGPU execution providers...");
+
+			switch (gpu_vendor_) {
+			case GpuVendor::NVIDIA: {
+				std::unordered_map<std::string, std::string> trt_rtx_options = {
+					{"nv_profile_min_shapes", "images:1x3x736x1280"},
+					{"nv_profile_max_shapes", "images:1x3x736x1280"},
+					{"nv_profile_opt_shapes", "images:1x3x736x1280"},
+					{"nv_max_workspace_size", "4294967296"},
+				};
+
+				std::string cache_path_str;
+				try {
+					auto local_folder = winrt::Windows::Storage::ApplicationData::Current().LocalFolder();
+					std::wstring cache_path_w = local_folder.Path().c_str();
+					cache_path_w += L"\\trt_rtx_cache";
+					CreateDirectoryW(cache_path_w.c_str(), nullptr);
+					int utf8_len = WideCharToMultiByte(CP_UTF8, 0, cache_path_w.c_str(), -1, nullptr, 0, nullptr, nullptr);
+					if (utf8_len > 0) {
+						cache_path_str.resize(utf8_len - 1);
+						WideCharToMultiByte(CP_UTF8, 0, cache_path_w.c_str(), -1, cache_path_str.data(), utf8_len, nullptr, nullptr);
+					}
+					trt_rtx_options["nv_runtime_cache_path"] = cache_path_str;
+					char dbg[512];
+					snprintf(dbg, sizeof(dbg), "[WinMLUtils] TensorRT-RTX runtime cache (LocalFolder): %s\n", cache_path_str.c_str());
+					OutputDebugStringA(dbg);
+				}
+				catch (...) {
+					char cache_path[MAX_PATH];
+					if (GetModuleFileNameA(nullptr, cache_path, MAX_PATH)) {
+						char* last_slash = strrchr(cache_path, '\\');
+						if (last_slash) {
+							*(last_slash + 1) = '\0';
+							strcat_s(cache_path, sizeof(cache_path), "trt_rtx_cache");
+							CreateDirectoryA(cache_path, nullptr);
+							trt_rtx_options["nv_runtime_cache_path"] = std::string(cache_path);
+							char dbg[512];
+							snprintf(dbg, sizeof(dbg), "[WinMLUtils] TensorRT-RTX runtime cache (fallback): %s\n", cache_path);
+							OutputDebugStringA(dbg);
+						}
+					}
+				}
+
+				if (try_append_catalog_ep("NvTensorRTRTXExecutionProvider", trt_rtx_options)) {
+					selected_ep = "TensorRT-RTX";
+				ep_reason = "NVIDIA GPU: TensorRT-RTX selected (profile shapes + 4GB workspace + runtime cache)";
+					ep_appended = true;
+				}
+				break;
+			}
+			case GpuVendor::AMD:
+				if (try_append_catalog_ep("MIGraphXExecutionProvider")) {
+					selected_ep = "MIGraphXExecutionProvider";
+				ep_reason = "AMD GPU: MIGraphX selected";
+					ep_appended = true;
+				}
+				break;
+			case GpuVendor::Intel:
+				if (try_append_catalog_ep("OpenVINOExecutionProvider")) {
+					selected_ep = "OpenVINOExecutionProvider";
+				ep_reason = "Intel GPU: OpenVINO selected";
+					ep_appended = true;
+				}
+				break;
+			default:
+				break;
+			}
+
+			if (!ep_appended) {
+				try_append_dml(OrtDmlDeviceFilter::Gpu, "DmlExecutionProvider", "dGPU: DirectML selected");
+			}
+		} else {
+			OutputDebugStringA("[WinMLUtils] dGPU not detected from current D3D11 device; skipping dGPU EP selection\n");
+		}
+
+		if (!ep_appended) {
+			ReportStatus("dGPU EP unavailable. Falling back to NPU execution providers...");
+			if (!try_append_npu_catalog_ep()) {
+				#ifdef ENABLE_NPU_ADAPTER_ENUMERATION
+				try_append_dml(OrtDmlDeviceFilter::Npu, "DmlExecutionProvider(NPU)", "NPU: DirectML selected");
+				#else
+				OutputDebugStringA("[WinMLUtils] NPU adapter enumeration is not enabled in this build\n");
+				#endif
+			}
+		}
+
+		if (!ep_appended) {
+			ReportStatus("NPU EP unavailable. Falling back to CPU execution provider...");
 		}
 
 		if (ep_appended) {

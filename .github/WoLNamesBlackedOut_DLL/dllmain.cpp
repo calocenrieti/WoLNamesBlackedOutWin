@@ -31,7 +31,7 @@ static bool g_gpuVendorInitialized = false;
 static StatusCallback g_statusCallback = nullptr;
 static std::mutex g_statusCallbackMutex;
 
-static void ReportStatus(const char* fmt, ...) {
+void ReportStatus(const char* fmt, ...) {
     std::lock_guard<std::mutex> lock(g_statusCallbackMutex);
     if (!g_statusCallback) return;
     char buf[512];

@@ -292,6 +292,7 @@ private:
 	int latest_processed_preview_width_ = 0;
 	int latest_processed_preview_height_ = 0;
 	std::atomic<int> latest_processed_preview_frame_index_{ -1 };
+	mutable std::atomic<ULONGLONG> latest_processed_preview_pull_tick_ms_{ 0 };
 };
 
 } // namespace WoLNamesBlackedOut::Core

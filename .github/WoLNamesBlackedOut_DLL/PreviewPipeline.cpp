@@ -135,11 +135,11 @@ bool PreviewPipeline::Initialize(
     }
     LogToFile("[PreviewPipeline] MaskShader Initialize OK\n");
 
-    tracker_ = std::make_unique<ByteTrackInterop::Tracker>(30, 30, conf_threshold_);
+    tracker_.reset();
     ocr_text_by_track_id_.clear();
     ocr_last_frame_by_track_.clear();
     preview_frame_counter_ = 0;
-    LogFmt("[ExcludeByName][Preview][Init] conf=%.3f\n", conf_threshold_);
+    LogFmt("[ExcludeByName][Preview][Init] conf=%.3f bytetrack=disabled\n", conf_threshold_);
 
     wchar_t modulePath[MAX_PATH] = {};
     GetModuleFileNameW(nullptr, modulePath, MAX_PATH);
@@ -748,66 +748,59 @@ bool PreviewPipeline::ApplyMask(ID3D11Texture2D* source_texture, uint32_t width,
 
     std::vector<Detection> active_detections = cached_detections_;
 
-    if (mask_params_.exclude_by_name_enabled && tracker_) {
+    if (mask_params_.exclude_by_name_enabled) {
         preview_frame_counter_++;
         LogFmt("[ExcludeByName][Preview] frame=%d det_in=%zu\n", preview_frame_counter_, cached_detections_.size());
-        std::vector<ByteTrackInterop::DetectionPtr> tracker_inputs;
-        tracker_inputs.reserve(cached_detections_.size());
-        for (const auto& d : cached_detections_) {
-            tracker_inputs.push_back(std::make_shared<ByteTrackInterop::Detection>(d));
-        }
 
-        auto tracked = tracker_->update(tracker_inputs);
-        LogFmt("[ExcludeByName][Preview] frame=%d tracked=%zu\n", preview_frame_counter_, tracked.size());
+        ocr_text_by_track_id_.clear();
+        ocr_last_frame_by_track_.clear();
+
         std::vector<OcrTrackRoi> ocr_rois;
         std::vector<std::pair<Detection, uint64_t>> tracked_entries;
-        tracked_entries.reserve(tracked.size());
+        tracked_entries.reserve(cached_detections_.size());
+        ocr_rois.reserve(cached_detections_.size());
+        const bool ocr_ready = ocr_recognizer_.IsReady();
+        uint64_t pseudo_track_id = 1;
 
-        for (const auto& tr : tracked) {
-            if (!tr) {
-                continue;
+        for (const auto& d : cached_detections_) {
+            tracked_entries.push_back({ d, pseudo_track_id });
+            if (ocr_ready) {
+                ocr_rois.push_back({ pseudo_track_id, d });
             }
-
-            const uint64_t track_id = static_cast<uint64_t>(tr->track_id());
-            Detection d = tr->getDetection();
-            tracked_entries.push_back({ d, track_id });
-
-            if (!ocr_recognizer_.IsReady() || track_id == 0) {
-                continue;
-            }
-
-            const auto last_it = ocr_last_frame_by_track_.find(track_id);
-            const bool has_text = ocr_text_by_track_id_.find(track_id) != ocr_text_by_track_id_.end();
-            const bool need_refresh = (last_it == ocr_last_frame_by_track_.end()) ||
-                ((preview_frame_counter_ - last_it->second) >= std::max(1, fps_));
-
-            if (!has_text || need_refresh) {
-                ocr_rois.push_back({ track_id, d });
-            }
+            ++pseudo_track_id;
         }
 
-        if (!ocr_rois.empty() && ocr_recognizer_.IsReady()) {
-            LogFmt("[ExcludeByName][Preview] frame=%d ocr_request=%zu\n", preview_frame_counter_, ocr_rois.size());
-            auto ocr_results = ocr_recognizer_.Recognize(
-                source_texture,
-                width,
-                height,
-                ocr_rois,
-                mask_params_.ocr_expand_pixels,
-                mask_params_.ocr_max_rois_per_frame);
+        std::unordered_map<uint64_t, std::string> ocr_text_by_detection_id;
+        if (!ocr_rois.empty() && ocr_ready) {
+            const int ocr_batch_size = std::clamp(mask_params_.ocr_max_rois_per_frame, 1, 32);
+            LogFmt("[ExcludeByName][Preview] frame=%d ocr_request=%zu batch=%d\n", preview_frame_counter_, ocr_rois.size(), ocr_batch_size);
 
-            for (const auto& ocr : ocr_results) {
-                const std::string text = TextMatch::Sanitize(ocr.text);
-                if (!text.empty()) {
-                    ocr_text_by_track_id_[ocr.track_id] = text;
+            for (size_t offset = 0; offset < ocr_rois.size(); offset += static_cast<size_t>(ocr_batch_size)) {
+                const size_t remain = ocr_rois.size() - offset;
+                const size_t batch_count = std::min(static_cast<size_t>(ocr_batch_size), remain);
+                std::vector<OcrTrackRoi> ocr_batch(ocr_rois.begin() + static_cast<std::ptrdiff_t>(offset),
+                                                   ocr_rois.begin() + static_cast<std::ptrdiff_t>(offset + batch_count));
+
+                auto ocr_results = ocr_recognizer_.Recognize(
+                    source_texture,
+                    width,
+                    height,
+                    ocr_batch,
+                    mask_params_.ocr_expand_pixels,
+                    ocr_batch_size);
+
+                for (const auto& ocr : ocr_results) {
+                    const std::string text = TextMatch::Sanitize(ocr.text);
+                    if (!text.empty()) {
+                        ocr_text_by_detection_id[ocr.track_id] = text;
+                    }
+                    LogFmt("[ExcludeByName][Preview][OCR] frame=%d id=%llu raw='%s' sanitized='%s' conf=%.3f\n",
+                        preview_frame_counter_,
+                        static_cast<unsigned long long>(ocr.track_id),
+                        ocr.text.c_str(),
+                        text.c_str(),
+                        ocr.confidence);
                 }
-                ocr_last_frame_by_track_[ocr.track_id] = preview_frame_counter_;
-                LogFmt("[ExcludeByName][Preview][OCR] frame=%d track=%llu raw='%s' sanitized='%s' conf=%.3f\n",
-                    preview_frame_counter_,
-                    static_cast<unsigned long long>(ocr.track_id),
-                    ocr.text.c_str(),
-                    text.c_str(),
-                    ocr.confidence);
             }
         }
 
@@ -819,10 +812,10 @@ bool PreviewPipeline::ApplyMask(ID3D11Texture2D* source_texture, uint32_t width,
         active_detections.reserve(tracked_entries.size());
         for (const auto& entry : tracked_entries) {
             if (entry.second != 0 && !exclude_texts.empty()) {
-                auto it = ocr_text_by_track_id_.find(entry.second);
-                if (it != ocr_text_by_track_id_.end()) {
+                auto it = ocr_text_by_detection_id.find(entry.second);
+                if (it != ocr_text_by_detection_id.end()) {
                     const bool excluded = TextMatch::IsExcludedBySimilarity(it->second, exclude_texts, mask_params_.text_similarity_threshold);
-                    LogFmt("[ExcludeByName][Preview][Match] frame=%d track=%llu text='%s' excluded=%d\n",
+                    LogFmt("[ExcludeByName][Preview][Match] frame=%d id=%llu text='%s' excluded=%d\n",
                         preview_frame_counter_,
                         static_cast<unsigned long long>(entry.second),
                         it->second.c_str(),

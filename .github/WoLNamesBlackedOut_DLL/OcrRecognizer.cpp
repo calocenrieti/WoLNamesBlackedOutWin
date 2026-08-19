@@ -10,6 +10,8 @@
 #include <winml/dml_provider_factory.h>
 #include <WinMLEpCatalog.h>
 
+void ReportStatus(const char* fmt, ...);
+
 namespace WoLNamesBlackedOut::Core {
 
 namespace {
@@ -18,7 +20,78 @@ struct OcrSessionCacheEntry {
 	std::shared_ptr<Ort::Session> session;
 	std::vector<std::string> input_names;
 	std::vector<std::string> output_names;
+	std::string ep_display_name;
 };
+
+std::string NormalizeEpDisplayName(const std::string& ep_name)
+{
+	if (ep_name.empty()) {
+		return "CPU";
+	}
+
+	if (ep_name == "NvTensorRTRTXExecutionProvider") {
+		return "TensorRT-RTX";
+	}
+
+	if (ep_name == "DmlExecutionProvider") {
+		return "DirectML";
+	}
+
+	if (ep_name == "DmlExecutionProvider(NPU)") {
+		return "DirectML (NPU)";
+	}
+
+	if (ep_name == "MIGraphXExecutionProvider") {
+		return "MIGraphX";
+	}
+
+	if (ep_name == "OpenVINOExecutionProvider") {
+		return "OpenVINO";
+	}
+
+	if (ep_name == "QNNExecutionProvider") {
+		return "QNN";
+	}
+
+	if (ep_name == "VitisAIExecutionProvider") {
+		return "VitisAI";
+	}
+
+	return ep_name;
+}
+
+bool IsDiscreteD3D11Device(ID3D11Device* device)
+{
+	if (!device) {
+		return false;
+	}
+
+	Microsoft::WRL::ComPtr<IDXGIDevice> dxgi_device;
+	if (FAILED(device->QueryInterface(IID_PPV_ARGS(&dxgi_device))) || !dxgi_device) {
+		return false;
+	}
+
+	Microsoft::WRL::ComPtr<IDXGIAdapter> adapter;
+	if (FAILED(dxgi_device->GetAdapter(&adapter)) || !adapter) {
+		return false;
+	}
+
+	Microsoft::WRL::ComPtr<IDXGIAdapter1> adapter1;
+	if (FAILED(adapter.As(&adapter1)) || !adapter1) {
+		return false;
+	}
+
+	DXGI_ADAPTER_DESC1 desc{};
+	if (FAILED(adapter1->GetDesc1(&desc))) {
+		return false;
+	}
+
+	if ((desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0) {
+		return false;
+	}
+
+	return desc.DedicatedVideoMemory > 0;
+}
 
 std::mutex& GetOcrSessionCacheMutex()
 {
@@ -147,15 +220,19 @@ bool EnsureCatalogEpReady(Ort::Env* env, const char* provider_name)
 		return false;
 	}
 
+	std::string display_name = NormalizeEpDisplayName(provider_name);
+
 	WinMLEpCatalogHandle catalog = nullptr;
 	HRESULT hr = WinMLEpCatalogCreate(&catalog);
 	if (FAILED(hr) || !catalog) {
+		ReportStatus("OCR EP catalog initialization failed");
 		return false;
 	}
 
 	WinMLEpHandle ep = nullptr;
 	hr = WinMLEpCatalogFindProvider(catalog, provider_name, nullptr, &ep);
 	if (FAILED(hr) || !ep) {
+		ReportStatus("OCR %s provider unavailable", display_name.c_str());
 		WinMLEpCatalogRelease(catalog);
 		return false;
 	}
@@ -163,21 +240,26 @@ bool EnsureCatalogEpReady(Ort::Env* env, const char* provider_name)
 	WinMLEpReadyState state = WinMLEpReadyState_NotPresent;
 	hr = WinMLEpGetReadyState(ep, &state);
 	if (FAILED(hr)) {
+		ReportStatus("OCR %s provider state check failed", display_name.c_str());
 		WinMLEpCatalogRelease(catalog);
 		return false;
 	}
 
 	if (state == WinMLEpReadyState_NotPresent || state == WinMLEpReadyState_NotReady) {
+		ReportStatus("Downloading OCR %s execution provider...", display_name.c_str());
 		hr = WinMLEpEnsureReady(ep);
 		if (FAILED(hr)) {
+			ReportStatus("OCR %s execution provider download failed", display_name.c_str());
 			WinMLEpCatalogRelease(catalog);
 			return false;
 		}
 		hr = WinMLEpGetReadyState(ep, &state);
 		if (FAILED(hr) || state != WinMLEpReadyState_Ready) {
+			ReportStatus("OCR %s execution provider preparation failed", display_name.c_str());
 			WinMLEpCatalogRelease(catalog);
 			return false;
 		}
+		ReportStatus("OCR %s execution provider ready", display_name.c_str());
 	}
 
 	bool registered = false;
@@ -196,6 +278,7 @@ bool EnsureCatalogEpReady(Ort::Env* env, const char* provider_name)
 					env->RegisterExecutionProviderLibrary(provider_name, library_path_w);
 					registered = true;
 				} catch (...) {
+					ReportStatus("OCR %s provider registration failed", display_name.c_str());
 					registered = false;
 				}
 			}
@@ -203,6 +286,9 @@ bool EnsureCatalogEpReady(Ort::Env* env, const char* provider_name)
 	}
 
 	WinMLEpCatalogRelease(catalog);
+	if (!registered) {
+		ReportStatus("OCR %s provider registration failed", display_name.c_str());
+	}
 	return registered;
 }
 
@@ -308,7 +394,9 @@ bool OcrRecognizer::LoadModel(const wchar_t* model_path, bool prefer_gpu)
 			session_ = it->second.session;
 			input_names_ = it->second.input_names;
 			output_names_ = it->second.output_names;
+			std::string ep_display_name = NormalizeEpDisplayName(it->second.ep_display_name);
 			OutputDebugStringA("[OcrRecognizer] Reusing cached OCR ONNX session\n");
+			ReportStatus("Reusing OCR EP: %s", ep_display_name.c_str());
 			return !input_names_.empty() && !output_names_.empty();
 		}
 	}
@@ -356,68 +444,113 @@ bool OcrRecognizer::LoadModel(const wchar_t* model_path, bool prefer_gpu)
 				return false;
 			};
 
-			switch (gpu_vendor_) {
-			case GpuVendor::NVIDIA: {
-				std::unordered_map<std::string, std::string> trt_rtx_options = {
-					{"nv_max_workspace_size", "4294967296"},
-				};
-
-				char temp_path[MAX_PATH] = {};
-				if (GetTempPathA(MAX_PATH, temp_path) > 0) {
-					std::string cache_path(temp_path);
-					cache_path += "wol_ocr_trt_rtx_cache";
-					CreateDirectoryA(cache_path.c_str(), nullptr);
-					trt_rtx_options["nv_runtime_cache_path"] = cache_path;
+			auto try_append_dml = [&has_ep, &session_options, &selected_ep, &ep_appended](OrtDmlDeviceFilter filter, const char* ep_name) -> bool {
+				if (!has_ep("DmlExecutionProvider")) {
+					return false;
 				}
 
-				if (try_append_catalog_ep("NvTensorRTRTXExecutionProvider", trt_rtx_options)) {
-					selected_ep = "NvTensorRTRTXExecutionProvider";
-					ep_appended = true;
-				} else if (has_ep("DmlExecutionProvider")) {
-					selected_ep = "DmlExecutionProvider";
-				}
-				break;
-			}
-			case GpuVendor::AMD:
-				if (try_append_catalog_ep("MIGraphXExecutionProvider")) {
-					selected_ep = "MIGraphXExecutionProvider";
-					ep_appended = true;
-				} else if (has_ep("DmlExecutionProvider")) {
-					selected_ep = "DmlExecutionProvider";
-				}
-				break;
-			case GpuVendor::Intel:
-				if (try_append_catalog_ep("OpenVINOExecutionProvider")) {
-					selected_ep = "OpenVINOExecutionProvider";
-					ep_appended = true;
-				} else if (has_ep("DmlExecutionProvider")) {
-					selected_ep = "DmlExecutionProvider";
-				}
-				break;
-			default:
-				if (has_ep("DmlExecutionProvider")) {
-					selected_ep = "DmlExecutionProvider";
-				}
-				break;
-			}
-
-			if (!selected_ep.empty() && !ep_appended && selected_ep == "DmlExecutionProvider") {
 				try {
 					const OrtDmlApi* dml_api = nullptr;
 					Ort::ThrowOnError(Ort::GetApi().GetExecutionProviderApi("DML", ORT_API_VERSION, reinterpret_cast<const void**>(&dml_api)));
 					if (dml_api != nullptr) {
 						OrtDmlDeviceOptions device_options;
 						device_options.Preference = OrtDmlPerformancePreference::HighPerformance;
-						device_options.Filter = OrtDmlDeviceFilter::Gpu;
+						device_options.Filter = filter;
 						Ort::ThrowOnError(dml_api->SessionOptionsAppendExecutionProvider_DML2(session_options, &device_options));
+						selected_ep = ep_name;
 						ep_appended = true;
+						return true;
 					}
 				} catch (...) {
-					ep_appended = false;
+				}
+
+				return false;
+			};
+
+			auto try_append_npu_catalog_ep = [&]() -> bool {
+				if (try_append_catalog_ep("QNNExecutionProvider")) {
+					selected_ep = "QNNExecutionProvider";
+					ep_appended = true;
+					return true;
+				}
+
+				if (try_append_catalog_ep("VitisAIExecutionProvider")) {
+					selected_ep = "VitisAIExecutionProvider";
+					ep_appended = true;
+					return true;
+				}
+
+				if (try_append_catalog_ep("OpenVINOExecutionProvider")) {
+					selected_ep = "OpenVINOExecutionProvider";
+					ep_appended = true;
+					return true;
+				}
+
+				return false;
+			};
+
+			const bool has_discrete_gpu = IsDiscreteD3D11Device(device_.Get());
+			if (has_discrete_gpu) {
+				ReportStatus("Trying OCR dGPU execution providers...");
+
+				switch (gpu_vendor_) {
+				case GpuVendor::NVIDIA: {
+					std::unordered_map<std::string, std::string> trt_rtx_options = {
+						{"nv_max_workspace_size", "4294967296"},
+					};
+
+					char temp_path[MAX_PATH] = {};
+					if (GetTempPathA(MAX_PATH, temp_path) > 0) {
+						std::string cache_path(temp_path);
+						cache_path += "wol_ocr_trt_rtx_cache";
+						CreateDirectoryA(cache_path.c_str(), nullptr);
+						trt_rtx_options["nv_runtime_cache_path"] = cache_path;
+					}
+
+					if (try_append_catalog_ep("NvTensorRTRTXExecutionProvider", trt_rtx_options)) {
+						selected_ep = "NvTensorRTRTXExecutionProvider";
+						ep_appended = true;
+					}
+					break;
+				}
+				case GpuVendor::AMD:
+					if (try_append_catalog_ep("MIGraphXExecutionProvider")) {
+						selected_ep = "MIGraphXExecutionProvider";
+						ep_appended = true;
+					}
+					break;
+				case GpuVendor::Intel:
+					if (try_append_catalog_ep("OpenVINOExecutionProvider")) {
+						selected_ep = "OpenVINOExecutionProvider";
+						ep_appended = true;
+					}
+					break;
+				default:
+					break;
+				}
+
+				if (!ep_appended) {
+					try_append_dml(OrtDmlDeviceFilter::Gpu, "DmlExecutionProvider");
 				}
 			}
+
+			if (!ep_appended) {
+				ReportStatus("OCR dGPU EP unavailable. Falling back to NPU execution providers...");
+				if (!try_append_npu_catalog_ep()) {
+					#ifdef ENABLE_NPU_ADAPTER_ENUMERATION
+					try_append_dml(OrtDmlDeviceFilter::Npu, "DmlExecutionProvider(NPU)");
+					#endif
+				}
+			}
+
+			if (!ep_appended) {
+				ReportStatus("OCR NPU EP unavailable. Falling back to CPU execution provider...");
+			}
+		} else {
+			ReportStatus("OCR GPU EP disabled. Falling back to CPU execution provider...");
 		}
 
+		std::string ep_display_name = NormalizeEpDisplayName(selected_ep);
 		if (ep_appended) {
 			char dbg[256] = {};
 			snprintf(dbg, sizeof(dbg), "[OcrRecognizer] GPU EP enabled: %s\n", selected_ep.c_str());
@@ -426,7 +559,10 @@ bool OcrRecognizer::LoadModel(const wchar_t* model_path, bool prefer_gpu)
 			OutputDebugStringA("[OcrRecognizer] CPU EP (GPU EP not enabled)\n");
 		}
 
+		ReportStatus("Initializing OCR EP: %s", ep_display_name.c_str());
+
 		session_ = std::make_shared<Ort::Session>(*env_, model_path, session_options);
+		ReportStatus("OCR EP ready: %s", ep_display_name.c_str());
 
 		input_names_.clear();
 		output_names_.clear();
@@ -447,11 +583,12 @@ bool OcrRecognizer::LoadModel(const wchar_t* model_path, bool prefer_gpu)
 		if (!input_names_.empty() && !output_names_.empty()) {
 			auto& session_cache = GetOcrSessionCache();
 			std::lock_guard<std::mutex> lock(GetOcrSessionCacheMutex());
-			session_cache[cache_key] = OcrSessionCacheEntry{ session_, input_names_, output_names_ };
+			session_cache[cache_key] = OcrSessionCacheEntry{ session_, input_names_, output_names_, ep_display_name };
 		}
 
 		return !input_names_.empty() && !output_names_.empty();
 	} catch (...) {
+		ReportStatus("OCR EP initialization failed");
 		session_.reset();
 		input_names_.clear();
 		output_names_.clear();
