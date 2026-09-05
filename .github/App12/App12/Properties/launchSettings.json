@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "WoLNamesBlackedOut": {
+      "commandName": "Project",
+      "environmentVariables": {
+        "WOL_DISABLE_COMPUTE_SHADER": "1"
+      }
+    }
+  }
+}

@@ -165,8 +165,48 @@ bool VideoPipeline::Initialize(const PipelineConfig& config) {
 		}
 	}
 
+	// 6. マスクシェーダー / CPUパイプライン判定
+	mosaic_size_ = config_.blackedout_param > 0 ? config_.blackedout_param : 3;
+	blur_radius_ = config_.blackedout_param > 0 ? config_.blackedout_param : 3;
+	// Respect WOL_FORCE_CPU_PIPELINE env var for session-only forced CPU path
+	bool force_cpu = false;
+	char env_force[32] = {};
+	{
+		char dbg_env[64] = {};
+		DWORD got = GetEnvironmentVariableA("WOL_FORCE_CPU_PIPELINE", dbg_env, static_cast<DWORD>(sizeof(dbg_env)));
+		if (got > 0 && got < sizeof(dbg_env)) {
+			PipelineLogFmt("[VideoPipeline::Initialize] env(WOL_FORCE_CPU_PIPELINE)='%s'\n", dbg_env);
+		} else {
+			PipelineLog("[VideoPipeline::Initialize] env(WOL_FORCE_CPU_PIPELINE) is not set\n");
+		}
+	}
+	DWORD got_force = GetEnvironmentVariableA("WOL_FORCE_CPU_PIPELINE", env_force, static_cast<DWORD>(sizeof(env_force)));
+	if (got_force > 0 && got_force < sizeof(env_force)) {
+		if (env_force[0] == '1' || _stricmp(env_force, "true") == 0) {
+			force_cpu = true;
+		}
+	}
+	if (force_cpu) {
+		use_cpu_pipeline_ = true;
+		PipelineLog("[VideoPipeline::Initialize] WOL_FORCE_CPU_PIPELINE=1, forcing CPU pipeline\n");
+	} else {
+		use_cpu_pipeline_ = !device_manager_.IsComputeShaderSupported();
+	}
+
+	if (!use_cpu_pipeline_) {
+		PipelineLog("[VideoPipeline::Initialize] Step 4: Mask shader init (GPU mode)\n");
+		if (!mask_shader_.Initialize(device_manager_.GetDevice())) {
+			PipelineLog("[VideoPipeline::Initialize] WARN: Mask shader init failed, falling back to CPU pipeline\n");
+			use_cpu_pipeline_ = true;
+		} else {
+			PipelineLog("[VideoPipeline::Initialize] Mask shader OK (GPU mode)\n");
+		}
+	} else {
+		PipelineLog("[VideoPipeline::Initialize] Step 4: Compute Shader not supported (FeatureLevel < 11_0), using CPU/OpenCV pipeline\n");
+	}
+
 	if (config_.exclude_by_name_enabled) {
-		PipelineLog("[VideoPipeline::Initialize] Step 3.5: Init ByteTrack + OCR\n");
+		PipelineLog("[VideoPipeline::Initialize] Step 5: Init ByteTrack + OCR\n");
 		const int tracker_fps = std::max(1, config_.fps);
 		tracker_ = std::make_unique<ByteTrackInterop::Tracker>(
 			tracker_fps,
@@ -201,8 +241,9 @@ bool VideoPipeline::Initialize(const PipelineConfig& config) {
 		ocr_recognizer_.SetGpuVendor(device_manager_.GetGpuVendor());
 
 		const bool dict_loaded = ocr_recognizer_.LoadDictionary(config_.ocr_dict_path);
-		const bool model_loaded = ocr_recognizer_.LoadModel(config_.ocr_model_path, true);
-		PipelineLogFmt("[ExcludeByName][Init] dict_loaded=%d model_loaded=%d\n", dict_loaded ? 1 : 0, model_loaded ? 1 : 0);
+		const bool prefer_gpu = !use_cpu_pipeline_;
+		const bool model_loaded = ocr_recognizer_.LoadModel(config_.ocr_model_path, prefer_gpu);
+		PipelineLogFmt("[ExcludeByName][Init] dict_loaded=%d model_loaded=%d (prefer_gpu=%d)\n", dict_loaded ? 1 : 0, model_loaded ? 1 : 0, prefer_gpu ? 1 : 0);
 		if (!dict_loaded || !model_loaded) {
 			PipelineLog("[VideoPipeline::Initialize] WARN: OCR init failed, disable exclude_by_name\n");
 			config_.exclude_by_name_enabled = false;
@@ -211,16 +252,6 @@ bool VideoPipeline::Initialize(const PipelineConfig& config) {
 			PipelineLog("[VideoPipeline::Initialize] ByteTrack + OCR ready\n");
 		}
 	}
-
-	// 6. マスクシェーダー初期化
-	mosaic_size_ = config_.blackedout_param > 0 ? config_.blackedout_param : 3;
-	blur_radius_ = config_.blackedout_param > 0 ? config_.blackedout_param : 3;
-	PipelineLog("[VideoPipeline::Initialize] Step 4: Mask shader init\n");
-	if (!mask_shader_.Initialize(device_manager_.GetDevice())) {
-		PipelineLog("[VideoPipeline::Initialize] FAILED: Mask shader init\n");
-		return false;
-	}
-	PipelineLog("[VideoPipeline::Initialize] Mask shader OK\n");
 
 	if (config_.enable_copyright) {
 		if (EnsureCopyrightWatermarkLoaded()) {
@@ -1292,58 +1323,67 @@ void VideoPipeline::InferenceThread() {
 						if (loop_count % 30 == 0) {
 							PipelineLogFmt("[InferenceThread] Applying mask type=%d, det=%zu\n", static_cast<int>(config_.blacked_type), mask_detections.size());
 						}
-						// マスクテクスチャ生成（元のフレーム解像度で）
-						auto mask_texture = mask_shader_.CreateMaskTexture(
-							frame.width,
-							frame.height,
-							mask_detections
-						);
 
-								if (mask_texture.Get()) {
-									Microsoft::WRL::ComPtr<ID3D11Texture2D> output_texture;
-									if (config_.blacked_type == MaskType::Mosaic) {
-										mask_shader_.ApplyMosaic(
-											current_texture.Get(),
-											mask_texture.Get(),
-											mosaic_size_,
-											output_texture
-										);
-									} else if (config_.blacked_type == MaskType::Blur) {
-										mask_shader_.ApplyBlur(
-											current_texture.Get(),
-											mask_texture.Get(),
-											blur_radius_,
-											output_texture
-										);
-									} else if (config_.blacked_type == MaskType::Inpaint) {
-										mask_shader_.ApplyInpaint(
-											current_texture.Get(),
-											mask_texture.Get(),
-											config_.blackedout_param,
-											output_texture
-										);
-									} else {
-										float color[4] = {
-											config_.name_color.r / 255.0f,
-											config_.name_color.g / 255.0f,
-											config_.name_color.b / 255.0f,
-											1.0f
-										};
-										mask_shader_.ApplyRectFill(
-											current_texture.Get(),
-											mask_texture.Get(),
-											color,
-											output_texture
-										);
-									}
-
-									if (output_texture.Get()) {
-										current_texture = output_texture;
-									}
-								}
-								// FlushはGPUパイプライン全体を停滞させるため常時実行しない
+						if (use_cpu_pipeline_) {
+							// CPU/OpenCV パス: テクスチャをCPU Matに読み出し、マスク適用後にGPUテクスチャへ書き戻す
+							cv::Mat cpu_frame(frame.height, frame.width, CV_8UC4);
+							if (device_manager_.ReadTextureToCpuBgra(current_texture.Get(), cpu_frame.data, frame.width, frame.height)) {
+								cpu_postprocessor_.ApplyMask(cpu_frame, mask_detections, config_.blacked_type, config_.blackedout_param, config_.name_color);
+								device_manager_.WriteCpuBgraToTexture(cpu_frame.data, frame.width, frame.height, current_texture.Get());
 							}
-						} // if (!input_names.empty())
+						} else {
+							// GPU マスクシェーダー パス
+							auto mask_texture = mask_shader_.CreateMaskTexture(
+								frame.width,
+								frame.height,
+								mask_detections
+							);
+
+							if (mask_texture.Get()) {
+								Microsoft::WRL::ComPtr<ID3D11Texture2D> output_texture;
+								if (config_.blacked_type == MaskType::Mosaic) {
+									mask_shader_.ApplyMosaic(
+										current_texture.Get(),
+										mask_texture.Get(),
+										mosaic_size_,
+										output_texture
+									);
+								} else if (config_.blacked_type == MaskType::Blur) {
+									mask_shader_.ApplyBlur(
+										current_texture.Get(),
+										mask_texture.Get(),
+										blur_radius_,
+										output_texture
+									);
+								} else if (config_.blacked_type == MaskType::Inpaint) {
+									mask_shader_.ApplyInpaint(
+										current_texture.Get(),
+										mask_texture.Get(),
+										config_.blackedout_param,
+										output_texture
+									);
+								} else {
+									float color[4] = {
+										config_.name_color.r / 255.0f,
+										config_.name_color.g / 255.0f,
+										config_.name_color.b / 255.0f,
+										1.0f
+									};
+									mask_shader_.ApplyRectFill(
+										current_texture.Get(),
+										mask_texture.Get(),
+										color,
+										output_texture
+									);
+								}
+
+								if (output_texture.Get()) {
+									current_texture = output_texture;
+								}
+							}
+						}
+					}
+				} // if (!input_names.empty())
 			} catch (const winrt::hresult_error& ex) {
 				std::cerr << "WinML inference error: " << winrt::to_string(ex.message()) << std::endl;
 			}
@@ -1352,55 +1392,62 @@ void VideoPipeline::InferenceThread() {
 			}
 		}
 
-		// 固定矩形マスクを適用（PreviewPipelineと同等のマスクテクスチャ経路）
+		// 固定矩形マスクを適用
 		if (config_.fixed_rect_count > 0 && current_texture.Get()) {
-			std::vector<Detection> fixed_detections;
-			fixed_detections.reserve(config_.fixed_rect_count);
-			for (int i = 0; i < config_.fixed_rect_count && i < 64; ++i) {
-				const auto& rect = config_.fixed_rects[i];
-				if (rect.width < 10 || rect.height < 10) continue;
-				Detection d;
-				d.class_id = -1;
-				d.score = 1.0f;
-				d.x1 = static_cast<float>(rect.x);
-				d.y1 = static_cast<float>(rect.y);
-				d.x2 = static_cast<float>(rect.x + rect.width);
-				d.y2 = static_cast<float>(rect.y + rect.height);
-				fixed_detections.push_back(d);
-			}
+			if (use_cpu_pipeline_) {
+				cv::Mat cpu_frame(frame.height, frame.width, CV_8UC4);
+				if (device_manager_.ReadTextureToCpuBgra(current_texture.Get(), cpu_frame.data, frame.width, frame.height)) {
+					cpu_postprocessor_.ApplyFixedRects(cpu_frame, config_.fixed_rects, config_.fixed_rect_count, config_.fixmask_type, config_.fixmask_param, config_.fixframe_color);
+					device_manager_.WriteCpuBgraToTexture(cpu_frame.data, frame.width, frame.height, current_texture.Get());
+				}
+			} else {
+				std::vector<Detection> fixed_detections;
+				fixed_detections.reserve(config_.fixed_rect_count);
+				for (int i = 0; i < config_.fixed_rect_count && i < 64; ++i) {
+					const auto& rect = config_.fixed_rects[i];
+					if (rect.width < 10 || rect.height < 10) continue;
+					Detection d;
+					d.class_id = -1;
+					d.score = 1.0f;
+					d.x1 = static_cast<float>(rect.x);
+					d.y1 = static_cast<float>(rect.y);
+					d.x2 = static_cast<float>(rect.x + rect.width);
+					d.y2 = static_cast<float>(rect.y + rect.height);
+					fixed_detections.push_back(d);
+				}
 
-			if (!fixed_detections.empty()) {
-				auto fixed_mask = mask_shader_.CreateMaskTexture(frame.width, frame.height, fixed_detections);
-				if (fixed_mask.Get()) {
-					Microsoft::WRL::ComPtr<ID3D11Texture2D> fixed_output;
-					bool fixed_result = false;
-					switch (config_.fixmask_type) {
-						case MaskType::Inpaint:
-							fixed_result = mask_shader_.ApplyInpaint(current_texture.Get(), fixed_mask.Get(), config_.fixmask_param, fixed_output);
-							break;
-						case MaskType::Mosaic:
-							fixed_result = mask_shader_.ApplyMosaic(current_texture.Get(), fixed_mask.Get(), config_.fixmask_param, fixed_output);
-							break;
-						case MaskType::Blur:
-							fixed_result = mask_shader_.ApplyBlur(current_texture.Get(), fixed_mask.Get(), config_.fixmask_param, fixed_output);
-							break;
-						case MaskType::RectFill:
-						default: {
-							float color[4] = {
-								config_.fixframe_color.r / 255.0f,
-								config_.fixframe_color.g / 255.0f,
-								config_.fixframe_color.b / 255.0f,
-								1.0f
-							};
-							fixed_result = mask_shader_.ApplyRectFill(current_texture.Get(), fixed_mask.Get(), color, fixed_output);
-							break;
+				if (!fixed_detections.empty()) {
+					auto fixed_mask = mask_shader_.CreateMaskTexture(frame.width, frame.height, fixed_detections);
+					if (fixed_mask.Get()) {
+						Microsoft::WRL::ComPtr<ID3D11Texture2D> fixed_output;
+						bool fixed_result = false;
+						switch (config_.fixmask_type) {
+							case MaskType::Inpaint:
+								fixed_result = mask_shader_.ApplyInpaint(current_texture.Get(), fixed_mask.Get(), config_.fixmask_param, fixed_output);
+								break;
+							case MaskType::Mosaic:
+								fixed_result = mask_shader_.ApplyMosaic(current_texture.Get(), fixed_mask.Get(), config_.fixmask_param, fixed_output);
+								break;
+							case MaskType::Blur:
+								fixed_result = mask_shader_.ApplyBlur(current_texture.Get(), fixed_mask.Get(), config_.fixmask_param, fixed_output);
+								break;
+							case MaskType::RectFill:
+							default: {
+								float color[4] = {
+									config_.fixframe_color.r / 255.0f,
+									config_.fixframe_color.g / 255.0f,
+									config_.fixframe_color.b / 255.0f,
+									1.0f
+								};
+								fixed_result = mask_shader_.ApplyRectFill(current_texture.Get(), fixed_mask.Get(), color, fixed_output);
+								break;
+							}
+						}
+
+						if (fixed_result && fixed_output.Get()) {
+							current_texture = fixed_output;
 						}
 					}
-
-					if (fixed_result && fixed_output.Get()) {
-						current_texture = fixed_output;
-					}
-					// FlushはGPUパイプライン全体を停滞させるため常時実行しない
 				}
 			}
 		}
@@ -1700,16 +1747,33 @@ void VideoPipeline::EncodeThread() {
 				pos_x = std::max(0, std::min(pos_x, std::max(0, max_x)));
 				pos_y = std::max(0, std::min(pos_y, std::max(0, max_y)));
 
-				Microsoft::WRL::ComPtr<ID3D11Texture2D> watermark_output;
-				if (mask_shader_.ApplyCopyrightOverlay(
-					frame.texture.Get(),
-					copyright_srv_.Get(),
-					target_w,
-					target_h,
-					pos_x,
-					pos_y,
-					watermark_output) && watermark_output.Get()) {
-					copyright_texture = watermark_output;
+				if (use_cpu_pipeline_) {
+					if (!cached_watermark_bgra_.empty()) {
+						cv::Mat cpu_frame(tex_desc.Height, tex_desc.Width, CV_8UC4);
+						if (device_manager_.ReadTextureToCpuBgra(frame.texture.Get(), cpu_frame.data, tex_desc.Width, tex_desc.Height)) {
+							cpu_postprocessor_.ApplyCopyrightOverlay(
+								cpu_frame,
+								cached_watermark_bgra_,
+								config_.copyright_offset_x,
+								config_.copyright_offset_y,
+								config_.copyright_scale
+							);
+							device_manager_.WriteCpuBgraToTexture(cpu_frame.data, tex_desc.Width, tex_desc.Height, frame.texture.Get());
+							copyright_texture = frame.texture;
+						}
+					}
+				} else {
+					Microsoft::WRL::ComPtr<ID3D11Texture2D> watermark_output;
+					if (mask_shader_.ApplyCopyrightOverlay(
+						frame.texture.Get(),
+						copyright_srv_.Get(),
+						target_w,
+						target_h,
+						pos_x,
+						pos_y,
+						watermark_output) && watermark_output.Get()) {
+						copyright_texture = watermark_output;
+					}
 				}
 			}
 		}

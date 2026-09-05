@@ -113,14 +113,6 @@ namespace WoLNamesBlackedOut
             {
             }
 
-            try
-            {
-                paths.Add(Path.Combine(ApplicationData.Current.LocalFolder.Path, fileName));
-            }
-            catch
-            {
-            }
-
             return paths;
         }
 

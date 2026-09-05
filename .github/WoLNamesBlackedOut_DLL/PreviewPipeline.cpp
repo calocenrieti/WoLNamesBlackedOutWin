@@ -127,13 +127,43 @@ bool PreviewPipeline::Initialize(
         LogToFile("[PreviewPipeline] model_path is null, skipping LoadModel\n");
     }
 
-    // マスクシェーダー初期化
-    LogToFile("[PreviewPipeline] Calling MaskShader Initialize...\n");
-    if (!mask_shader_.Initialize(device_)) {
-        LogToFile("[PreviewPipeline] FAIL: MaskShader Initialize\n");
-        return false;
+    // Compute Shader のサポート状態を確認し、GPU/CPU パイプラインを決定
+    // WOL_FORCE_CPU_PIPELINE 環境変数があればそれを優先して CPU ラインを強制
+    bool force_cpu = false;
+    char env_force[32] = {};
+    {
+        char dbg_env[64] = {};
+        DWORD got = GetEnvironmentVariableA("WOL_FORCE_CPU_PIPELINE", dbg_env, static_cast<DWORD>(sizeof(dbg_env)));
+        if (got > 0 && got < sizeof(dbg_env)) {
+            LogFmt("[PreviewPipeline] env(WOL_FORCE_CPU_PIPELINE)='%s'\n", dbg_env);
+        } else {
+            LogToFile("[PreviewPipeline] env(WOL_FORCE_CPU_PIPELINE) is not set\n");
+        }
     }
-    LogToFile("[PreviewPipeline] MaskShader Initialize OK\n");
+    DWORD got_force = GetEnvironmentVariableA("WOL_FORCE_CPU_PIPELINE", env_force, static_cast<DWORD>(sizeof(env_force)));
+    if (got_force > 0 && got_force < sizeof(env_force)) {
+        if (env_force[0] == '1' || _stricmp(env_force, "true") == 0) {
+            force_cpu = true;
+        }
+    }
+    if (force_cpu) {
+        use_cpu_pipeline_ = true;
+        LogToFile("[PreviewPipeline] WOL_FORCE_CPU_PIPELINE=1, forcing CPU pipeline\n");
+    } else {
+        use_cpu_pipeline_ = !device_manager_->IsComputeShaderSupported();
+    }
+    if (!use_cpu_pipeline_) {
+        // マスクシェーダー初期化
+        LogToFile("[PreviewPipeline] Calling MaskShader Initialize...\n");
+        if (!mask_shader_.Initialize(device_)) {
+            LogToFile("[PreviewPipeline] WARN: MaskShader Initialize failed, falling back to CPU pipeline\n");
+            use_cpu_pipeline_ = true;
+        } else {
+            LogToFile("[PreviewPipeline] MaskShader Initialize OK (GPU mode)\n");
+        }
+    } else {
+        LogToFile("[PreviewPipeline] Compute Shader not supported (FeatureLevel < 11_0), using CPU/OpenCV pipeline\n");
+    }
 
     tracker_.reset();
     ocr_text_by_track_id_.clear();
@@ -155,8 +185,9 @@ bool PreviewPipeline::Initialize(
     ocr_recognizer_.SetD3D11Device(device_, context_);
     ocr_recognizer_.SetGpuVendor(device_manager_->GetGpuVendor());
     const bool dict_loaded = ocr_recognizer_.LoadDictionary(ocrDictPath.c_str());
-    const bool model_loaded = ocr_recognizer_.LoadModel(ocrModelPath.c_str(), true);
-    LogFmt("[ExcludeByName][Preview][Init] dict_loaded=%d model_loaded=%d\n", dict_loaded ? 1 : 0, model_loaded ? 1 : 0);
+    const bool prefer_gpu = !use_cpu_pipeline_;
+    const bool model_loaded = ocr_recognizer_.LoadModel(ocrModelPath.c_str(), prefer_gpu);
+    LogFmt("[ExcludeByName][Preview][Init] dict_loaded=%d model_loaded=%d (prefer_gpu=%d)\n", dict_loaded ? 1 : 0, model_loaded ? 1 : 0, prefer_gpu ? 1 : 0);
     if (!dict_loaded || !model_loaded) {
         LogToFile("[PreviewPipeline] WARN: OCR not ready, exclude-by-name will fallback to regular masking\n");
     }
@@ -388,7 +419,24 @@ bool PreviewPipeline::GetFrame(
         result = GetImageFrame();
     }
 
-    if (!result || !output_texture_) return false;
+    if (!result) return false;
+
+    if (use_cpu_pipeline_) {
+        std::lock_guard<std::mutex> lock(params_mutex_);
+        if (cached_cpu_preview_output_.empty()) return false;
+
+        *out_width = cached_cpu_preview_output_.cols;
+        *out_height = cached_cpu_preview_output_.rows;
+        int required_size = (*out_width) * (*out_height) * 4;
+        if (buffer_size < required_size) return false;
+
+        memcpy(out_rgba_buffer, cached_cpu_preview_output_.data, required_size);
+        LogFmt("[PreviewTiming][CPU] mask_ms=%.3f total_ms=%.3f\n",
+            ElapsedMilliseconds(maskStart), ElapsedMilliseconds(frameStart));
+        return true;
+    }
+
+    if (!output_texture_) return false;
 
     const double maskMs = ElapsedMilliseconds(maskStart);
     const auto readbackStart = PreviewClock::now();
@@ -586,6 +634,12 @@ bool PreviewPipeline::RunInference(ID3D11Texture2D* source_texture, uint32_t wid
         uint32_t src_w = src_desc.Width;
         uint32_t src_h = src_desc.Height;
 
+        // CPUバックアップ用にフレームをcv::Matとして保持
+        cached_cpu_frame_bgra_ = cv::Mat(src_h, src_w, CV_8UC4);
+        for (uint32_t y = 0; y < src_h; ++y) {
+            memcpy(cached_cpu_frame_bgra_.ptr<uint8_t>(y), src_data + y * mapped.RowPitch, src_w * 4);
+        }
+
         // --- YOLO26 前処理: 左上揃えリサイズ（letterbox なし）---
         // resizeScales = original_dim / target_dim（参照コードと同じ）
         float scale_x = float(src_w) / float(MODEL_W);
@@ -781,13 +835,24 @@ bool PreviewPipeline::ApplyMask(ID3D11Texture2D* source_texture, uint32_t width,
                 std::vector<OcrTrackRoi> ocr_batch(ocr_rois.begin() + static_cast<std::ptrdiff_t>(offset),
                                                    ocr_rois.begin() + static_cast<std::ptrdiff_t>(offset + batch_count));
 
-                auto ocr_results = ocr_recognizer_.Recognize(
-                    source_texture,
-                    width,
-                    height,
-                    ocr_batch,
-                    mask_params_.ocr_expand_pixels,
-                    ocr_batch_size);
+                std::vector<OcrTrackResult> ocr_results;
+                if (use_cpu_pipeline_ && !cached_cpu_frame_bgra_.empty()) {
+                    ocr_results = ocr_recognizer_.RecognizeFromCpuBgra(
+                        cached_cpu_frame_bgra_.data,
+                        width,
+                        height,
+                        ocr_batch,
+                        mask_params_.ocr_expand_pixels,
+                        ocr_batch_size);
+                } else {
+                    ocr_results = ocr_recognizer_.Recognize(
+                        source_texture,
+                        width,
+                        height,
+                        ocr_batch,
+                        mask_params_.ocr_expand_pixels,
+                        ocr_batch_size);
+                }
 
                 for (const auto& ocr : ocr_results) {
                     const std::string text = TextMatch::Sanitize(ocr.text);
@@ -828,6 +893,46 @@ bool PreviewPipeline::ApplyMask(ID3D11Texture2D* source_texture, uint32_t width,
             active_detections.push_back(entry.first);
         }
         LogFmt("[ExcludeByName][Preview] frame=%d mask_after=%zu\n", preview_frame_counter_, active_detections.size());
+    }
+
+    // CPU パイプラインモード時の処理（OpenCV）
+    if (use_cpu_pipeline_) {
+        cv::Mat baseMat;
+        if (!cached_cpu_frame_bgra_.empty() && cached_cpu_frame_bgra_.cols == static_cast<int>(width) && cached_cpu_frame_bgra_.rows == static_cast<int>(height)) {
+            baseMat = cached_cpu_frame_bgra_.clone();
+        } else {
+            baseMat = cv::Mat(height, width, CV_8UC4);
+            if (!device_manager_->ReadTextureToCpuBgra(source_texture, baseMat.data, width, height)) {
+                return false;
+            }
+        }
+
+        // 検出箇所マスク適用
+        if (blacked_type != MaskType::No_Inference && !active_detections.empty()) {
+            cpu_postprocessor_.ApplyMask(baseMat, active_detections, blacked_type, mask_params_.blackedout_param, mask_params_.name_color);
+        }
+
+        // 固定矩形マスク適用
+        if (mask_params_.fixed_rect_count > 0) {
+            cpu_postprocessor_.ApplyFixedRects(baseMat, mask_params_.fixed_rects, mask_params_.fixed_rect_count, fixmask_type, mask_params_.fixedFrame_param, mask_params_.fixframe_color);
+        }
+
+        // 透かし合成
+        if (mask_params_.enable_copyright) {
+            std::wstring overridePath = copyright_image_path_override_;
+            if (EnsureCopyrightWatermarkLoaded(overridePath) && !cached_watermark_bgra_.empty()) {
+                cpu_postprocessor_.ApplyCopyrightOverlay(
+                    baseMat,
+                    cached_watermark_bgra_,
+                    mask_params_.copyright_offset_x,
+                    mask_params_.copyright_offset_y,
+                    mask_params_.copyright_scale
+                );
+            }
+        }
+
+        cached_cpu_preview_output_ = baseMat;
+        return true;
     }
 
     // マスク適用が不要な場合
@@ -1074,6 +1179,14 @@ bool PreviewPipeline::EnsureCopyrightWatermarkLoaded(const std::wstring& overrid
     if (!loaded) {
         LogToFile("[PreviewPipeline] Failed to load copyright image from all candidates\n");
         return false;
+    }
+
+    // CPU用の透かし画像Matを生成
+    if (copyright_texture_ && copyright_width_ > 0 && copyright_height_ > 0) {
+        cached_watermark_bgra_ = cv::Mat(copyright_height_, copyright_width_, CV_8UC4);
+        if (!device_manager_->ReadTextureToCpuBgra(copyright_texture_.Get(), cached_watermark_bgra_.data, copyright_width_, copyright_height_)) {
+            LogToFile("[PreviewPipeline] WARN: Failed to read copyright texture to CPU Mat\n");
+        }
     }
 
     HRESULT hr = device_->CreateShaderResourceView(

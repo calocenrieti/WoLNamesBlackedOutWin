@@ -50,6 +50,17 @@ public:
 		int expand_pixels,
 		int max_rois_per_frame) const;
 
+	/**
+	 * @brief CPU BGRAバッファから直接OCR推論を実行（GPUテクスチャ不要）
+	 */
+	std::vector<OcrTrackResult> RecognizeFromCpuBgra(
+		const uint8_t* bgra_data,
+		uint32_t frame_width,
+		uint32_t frame_height,
+		const std::vector<OcrTrackRoi>& track_rois,
+		int expand_pixels,
+		int max_rois_per_frame) const;
+
 private:
 	static constexpr int kTargetHeight = 48;
 	static constexpr int kMaxWidth = 320;

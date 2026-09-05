@@ -1,17 +1,21 @@
 using Microsoft.UI.Xaml;
 using System;
 using System.IO;
+using Windows.Storage;
 
 namespace WoLNamesBlackedOut
 {
     public static class Program
     {
         private static readonly string BootstrapLogFileName = CreateTimestampedFileName("wol_bootstrap.log");
+        private const string ForceCpuPipelinePreferenceKey = "ForceCpuPipeline";
 
         [STAThread]
         private static void Main(string[] args)
         {
             WriteBootstrapLog("main:begin");
+
+            TryApplyForceCpuPipelineAtProcessStart();
 
             AppDomain.CurrentDomain.FirstChanceException += (s, e) =>
             {
@@ -52,23 +56,31 @@ namespace WoLNamesBlackedOut
             }
         }
 
+        private static void TryApplyForceCpuPipelineAtProcessStart()
+        {
+            try
+            {
+                bool forceCpu = false;
+                var settings = ApplicationData.Current.LocalSettings;
+                if (settings != null && settings.Values.TryGetValue(ForceCpuPipelinePreferenceKey, out object value))
+                {
+                    _ = bool.TryParse(value?.ToString(), out forceCpu);
+                }
+
+                Environment.SetEnvironmentVariable("WOL_FORCE_CPU_PIPELINE", forceCpu ? "1" : "0", EnvironmentVariableTarget.Process);
+                WriteBootstrapLog($"main:force_cpu_pipeline={(forceCpu ? "true" : "false")}");
+            }
+            catch (Exception ex)
+            {
+                WriteBootstrapLog($"main:force_cpu_pipeline_read_failed:{ex.Message}");
+            }
+        }
+
         private static void WriteBootstrapLog(string marker)
         {
             string line = $"[{DateTime.Now:O}] {marker}{Environment.NewLine}";
 
             TryAppend(Path.Combine(Path.GetTempPath(), BootstrapLogFileName), line);
-
-            try
-            {
-                string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-                if (!string.IsNullOrWhiteSpace(localAppData))
-                {
-                    TryAppend(Path.Combine(localAppData, BootstrapLogFileName), line);
-                }
-            }
-            catch
-            {
-            }
         }
 
         private static string CreateTimestampedFileName(string fileName)

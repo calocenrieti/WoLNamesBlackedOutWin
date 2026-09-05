@@ -1,11 +1,17 @@
 #include "pch.h"
 #include "OcrRecognizer.h"
+#include "ModelCompilationCache.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cctype>
 #include <cmath>
 #include <fstream>
+
+// OpenCV
+#include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
+#include <opencv2/dnn.hpp>
 
 #include <winml/dml_provider_factory.h>
 #include <WinMLEpCatalog.h>
@@ -60,6 +66,82 @@ std::string NormalizeEpDisplayName(const std::string& ep_name)
 	return ep_name;
 }
 
+const char* OcrReadyStateToString(WinMLEpReadyState state)
+{
+	switch (state) {
+	case WinMLEpReadyState_Ready:
+		return "Ready";
+	case WinMLEpReadyState_NotReady:
+		return "NotReady";
+	case WinMLEpReadyState_NotPresent:
+		return "NotPresent";
+	default:
+		return "Unknown";
+	}
+}
+
+BOOL CALLBACK OcrEpCatalogEnumCallback(
+	_In_ WinMLEpHandle ep,
+	_In_ const WinMLEpInfo* info,
+	_In_opt_ void* context)
+{
+	(void)ep;
+	(void)context;
+
+	const char* name = (info && info->name) ? info->name : "(null)";
+	const char* version = (info && info->version) ? info->version : "(null)";
+	const char* library_path = (info && info->libraryPath) ? info->libraryPath : "(null)";
+	const char* ready_state = info ? OcrReadyStateToString(info->readyState) : "Unknown";
+
+	char dbg[1024] = {};
+	snprintf(dbg, sizeof(dbg),
+		"[OcrRecognizer][EP Catalog] name=%s version=%s ready=%s lib=%s\n",
+		name,
+		version,
+		ready_state,
+		library_path);
+	OutputDebugStringA(dbg);
+
+	return TRUE;
+}
+
+void LogOcrEpCatalog()
+{
+	OutputDebugStringA("[OcrRecognizer] Enumerating OCR WinML EP catalog...\n");
+	WinMLEpCatalogHandle catalog = nullptr;
+	HRESULT hr = WinMLEpCatalogCreate(&catalog);
+	if (FAILED(hr) || !catalog) {
+		char dbg[256] = {};
+		snprintf(dbg, sizeof(dbg), "[OcrRecognizer] WinMLEpCatalogCreate failed: 0x%08X\n", static_cast<unsigned>(hr));
+		OutputDebugStringA(dbg);
+		return;
+	}
+
+	hr = WinMLEpCatalogEnumProviders(catalog, OcrEpCatalogEnumCallback, nullptr);
+	if (FAILED(hr)) {
+		char dbg[256] = {};
+		snprintf(dbg, sizeof(dbg), "[OcrRecognizer] WinMLEpCatalogEnumProviders failed: 0x%08X\n", static_cast<unsigned>(hr));
+		OutputDebugStringA(dbg);
+	}
+
+	WinMLEpCatalogRelease(catalog);
+}
+
+void LogOcrAvailableProviders(const std::vector<std::string>& providers)
+{
+	std::string provider_list;
+	for (const auto& provider : providers) {
+		if (!provider_list.empty()) {
+			provider_list += ", ";
+		}
+		provider_list += provider;
+	}
+
+	char dbg[768] = {};
+	snprintf(dbg, sizeof(dbg), "[OcrRecognizer] Available providers: %s\n", provider_list.empty() ? "(none)" : provider_list.c_str());
+	OutputDebugStringA(dbg);
+}
+
 bool IsDiscreteD3D11Device(ID3D11Device* device)
 {
 	if (!device) {
@@ -91,6 +173,35 @@ bool IsDiscreteD3D11Device(ID3D11Device* device)
 	}
 
 	return desc.DedicatedVideoMemory > 0;
+}
+
+bool IsInvalidGraphException(const Ort::Exception& ex)
+{
+	if (ex.GetOrtErrorCode() == ORT_INVALID_GRAPH) {
+		return true;
+	}
+
+	std::string message = ex.what();
+	std::transform(message.begin(), message.end(), message.begin(), [](unsigned char c) {
+		return static_cast<char>(std::toupper(c));
+	});
+
+	return message.find("INVALID_GRAPH") != std::string::npos;
+}
+
+bool IsSamePathInsensitive(const std::wstring& lhs, const std::wstring& rhs)
+{
+	if (lhs.size() != rhs.size()) {
+		return false;
+	}
+
+	for (size_t i = 0; i < lhs.size(); ++i) {
+		if (towlower(lhs[i]) != towlower(rhs[i])) {
+			return false;
+		}
+	}
+
+	return true;
 }
 
 std::mutex& GetOcrSessionCacheMutex()
@@ -140,6 +251,14 @@ std::string BuildOcrSessionCacheKey(const wchar_t* model_path, WoLNamesBlackedOu
 	key += std::to_string(static_cast<int>(vendor));
 	key += "|use_gpu=";
 	key += use_gpu ? "1" : "0";
+	char force_cpu_buf[32] = {};
+	DWORD got_force_cpu = GetEnvironmentVariableA("WOL_FORCE_CPU_PIPELINE", force_cpu_buf, static_cast<DWORD>(sizeof(force_cpu_buf)));
+	bool force_cpu = false;
+	if (got_force_cpu > 0 && got_force_cpu < sizeof(force_cpu_buf)) {
+		force_cpu = (force_cpu_buf[0] == '1') || (_stricmp(force_cpu_buf, "true") == 0);
+	}
+	key += "|forcecpu=";
+	key += force_cpu ? "1" : "0";
 	return key;
 }
 
@@ -221,10 +340,15 @@ bool EnsureCatalogEpReady(Ort::Env* env, const char* provider_name)
 	}
 
 	std::string display_name = NormalizeEpDisplayName(provider_name);
+	char dbg[768] = {};
+	snprintf(dbg, sizeof(dbg), "[OcrRecognizer] EnsureCatalogEpReady: provider=%s\n", provider_name);
+	OutputDebugStringA(dbg);
 
 	WinMLEpCatalogHandle catalog = nullptr;
 	HRESULT hr = WinMLEpCatalogCreate(&catalog);
 	if (FAILED(hr) || !catalog) {
+		snprintf(dbg, sizeof(dbg), "[OcrRecognizer] WinMLEpCatalogCreate failed: 0x%08X\n", static_cast<unsigned>(hr));
+		OutputDebugStringA(dbg);
 		ReportStatus("OCR EP catalog initialization failed");
 		return false;
 	}
@@ -232,6 +356,8 @@ bool EnsureCatalogEpReady(Ort::Env* env, const char* provider_name)
 	WinMLEpHandle ep = nullptr;
 	hr = WinMLEpCatalogFindProvider(catalog, provider_name, nullptr, &ep);
 	if (FAILED(hr) || !ep) {
+		snprintf(dbg, sizeof(dbg), "[OcrRecognizer] WinMLEpCatalogFindProvider failed: provider=%s hr=0x%08X\n", provider_name, static_cast<unsigned>(hr));
+		OutputDebugStringA(dbg);
 		ReportStatus("OCR %s provider unavailable", display_name.c_str());
 		WinMLEpCatalogRelease(catalog);
 		return false;
@@ -240,20 +366,30 @@ bool EnsureCatalogEpReady(Ort::Env* env, const char* provider_name)
 	WinMLEpReadyState state = WinMLEpReadyState_NotPresent;
 	hr = WinMLEpGetReadyState(ep, &state);
 	if (FAILED(hr)) {
+		snprintf(dbg, sizeof(dbg), "[OcrRecognizer] WinMLEpGetReadyState failed: provider=%s hr=0x%08X\n", provider_name, static_cast<unsigned>(hr));
+		OutputDebugStringA(dbg);
 		ReportStatus("OCR %s provider state check failed", display_name.c_str());
 		WinMLEpCatalogRelease(catalog);
 		return false;
 	}
+	snprintf(dbg, sizeof(dbg), "[OcrRecognizer] EP state: provider=%s state=%s\n", provider_name, OcrReadyStateToString(state));
+	OutputDebugStringA(dbg);
 
 	if (state == WinMLEpReadyState_NotPresent || state == WinMLEpReadyState_NotReady) {
 		ReportStatus("Downloading OCR %s execution provider...", display_name.c_str());
+		snprintf(dbg, sizeof(dbg), "[OcrRecognizer] WinMLEpEnsureReady start: provider=%s\n", provider_name);
+		OutputDebugStringA(dbg);
 		hr = WinMLEpEnsureReady(ep);
 		if (FAILED(hr)) {
+			snprintf(dbg, sizeof(dbg), "[OcrRecognizer] WinMLEpEnsureReady failed: provider=%s hr=0x%08X\n", provider_name, static_cast<unsigned>(hr));
+			OutputDebugStringA(dbg);
 			ReportStatus("OCR %s execution provider download failed", display_name.c_str());
 			WinMLEpCatalogRelease(catalog);
 			return false;
 		}
 		hr = WinMLEpGetReadyState(ep, &state);
+		snprintf(dbg, sizeof(dbg), "[OcrRecognizer] EP state after ensure: provider=%s state=%s hr=0x%08X\n", provider_name, OcrReadyStateToString(state), static_cast<unsigned>(hr));
+		OutputDebugStringA(dbg);
 		if (FAILED(hr) || state != WinMLEpReadyState_Ready) {
 			ReportStatus("OCR %s execution provider preparation failed", display_name.c_str());
 			WinMLEpCatalogRelease(catalog);
@@ -265,23 +401,70 @@ bool EnsureCatalogEpReady(Ort::Env* env, const char* provider_name)
 	bool registered = false;
 	size_t path_size = 0;
 	hr = WinMLEpGetLibraryPathSize(ep, &path_size);
+	snprintf(dbg, sizeof(dbg), "[OcrRecognizer] WinMLEpGetLibraryPathSize: provider=%s hr=0x%08X size=%zu\n", provider_name, static_cast<unsigned>(hr), path_size);
+	OutputDebugStringA(dbg);
 	if (SUCCEEDED(hr) && path_size > 0) {
 		std::string library_path_utf8(path_size, '\0');
 		hr = WinMLEpGetLibraryPath(ep, path_size, library_path_utf8.data(), nullptr);
 		if (SUCCEEDED(hr)) {
 			library_path_utf8.resize(strlen(library_path_utf8.c_str()));
+			snprintf(dbg, sizeof(dbg), "[OcrRecognizer] EP library path: provider=%s path=%s\n", provider_name, library_path_utf8.c_str());
+			OutputDebugStringA(dbg);
 			int wlen = MultiByteToWideChar(CP_UTF8, 0, library_path_utf8.c_str(), -1, nullptr, 0);
 			if (wlen > 0) {
 				std::wstring library_path_w(static_cast<size_t>(wlen) - 1, L'\0');
 				MultiByteToWideChar(CP_UTF8, 0, library_path_utf8.c_str(), -1, library_path_w.data(), wlen);
 				try {
 					env->RegisterExecutionProviderLibrary(provider_name, library_path_w);
+					snprintf(dbg, sizeof(dbg), "[OcrRecognizer] RegisterExecutionProviderLibrary success: provider=%s\n", provider_name);
+					OutputDebugStringA(dbg);
 					registered = true;
+				} catch (const Ort::Exception& ex) {
+					snprintf(dbg, sizeof(dbg), "[OcrRecognizer] RegisterExecutionProviderLibrary failed: provider=%s, error=%s\n", provider_name, ex.what());
+					OutputDebugStringA(dbg);
+					ReportStatus("OCR %s provider registration failed", display_name.c_str());
+					registered = false;
+				} catch (const std::exception& ex) {
+					snprintf(dbg, sizeof(dbg), "[OcrRecognizer] RegisterExecutionProviderLibrary failed: provider=%s, std::error=%s\n", provider_name, ex.what());
+					OutputDebugStringA(dbg);
+					ReportStatus("OCR %s provider registration failed", display_name.c_str());
+					registered = false;
 				} catch (...) {
+					snprintf(dbg, sizeof(dbg), "[OcrRecognizer] RegisterExecutionProviderLibrary failed: provider=%s, unknown exception\n", provider_name);
+					OutputDebugStringA(dbg);
 					ReportStatus("OCR %s provider registration failed", display_name.c_str());
 					registered = false;
 				}
 			}
+		}
+	}
+
+	if (!registered) {
+		try {
+			auto ep_devices = env->GetEpDevices();
+			bool found_target = false;
+			for (const auto& device : ep_devices) {
+				if (std::string(device.EpName()) == provider_name) {
+					found_target = true;
+					break;
+				}
+			}
+
+			if (found_target) {
+				snprintf(dbg, sizeof(dbg), "[OcrRecognizer] Provider visible in GetEpDevices despite registration failure: provider=%s. Continue.\n", provider_name);
+				OutputDebugStringA(dbg);
+				ReportStatus("OCR %s provider is visible and will be used", display_name.c_str());
+				registered = true;
+			} else {
+				snprintf(dbg, sizeof(dbg), "[OcrRecognizer] Provider not visible in GetEpDevices: provider=%s\n", provider_name);
+				OutputDebugStringA(dbg);
+			}
+		} catch (const Ort::Exception& ex) {
+			snprintf(dbg, sizeof(dbg), "[OcrRecognizer] GetEpDevices check failed: provider=%s, error=%s\n", provider_name, ex.what());
+			OutputDebugStringA(dbg);
+		} catch (...) {
+			snprintf(dbg, sizeof(dbg), "[OcrRecognizer] GetEpDevices check failed: provider=%s, unknown exception\n", provider_name);
+			OutputDebugStringA(dbg);
 		}
 	}
 
@@ -375,7 +558,19 @@ bool OcrRecognizer::LoadModel(const wchar_t* model_path, bool prefer_gpu)
 		env_ = GetSharedOcrOrtEnv();
 	}
 
-	bool use_gpu = prefer_gpu;
+	bool force_cpu_pipeline = false;
+	{
+		char force_cpu_buf[32] = {};
+		DWORD got_force_cpu = GetEnvironmentVariableA("WOL_FORCE_CPU_PIPELINE", force_cpu_buf, static_cast<DWORD>(sizeof(force_cpu_buf)));
+		if (got_force_cpu > 0 && got_force_cpu < sizeof(force_cpu_buf)) {
+			force_cpu_pipeline = (force_cpu_buf[0] == '1') || (_stricmp(force_cpu_buf, "true") == 0);
+		}
+		char dbg_force[128] = {};
+		snprintf(dbg_force, sizeof(dbg_force), "[OcrRecognizer] force_cpu_pipeline=%d prefer_gpu=%d\n", force_cpu_pipeline ? 1 : 0, prefer_gpu ? 1 : 0);
+		OutputDebugStringA(dbg_force);
+	}
+
+	bool use_gpu = force_cpu_pipeline ? false : prefer_gpu;
 	{
 		char env_buf[8] = {};
 		DWORD got = GetEnvironmentVariableA("WOL_DISABLE_OCR_DML", env_buf, static_cast<DWORD>(sizeof(env_buf)));
@@ -409,129 +604,141 @@ bool OcrRecognizer::LoadModel(const wchar_t* model_path, bool prefer_gpu)
 		std::string selected_ep;
 		bool ep_appended = false;
 
-		if (use_gpu) {
-			std::vector<std::string> available_providers;
+		std::vector<std::string> available_providers;
+		try {
+			available_providers = Ort::GetAvailableProviders();
+		} catch (...) {
+		}
+		LogOcrAvailableProviders(available_providers);
+		LogOcrEpCatalog();
+
+		auto has_ep = [&available_providers](const std::string& name) {
+			return std::find(available_providers.begin(), available_providers.end(), name) != available_providers.end();
+		};
+
+		auto try_append_catalog_ep = [this, &session_options](const char* ep_name,
+			const std::unordered_map<std::string, std::string>& ep_options = {}) -> bool {
+			if (!EnsureCatalogEpReady(env_.get(), ep_name)) {
+				return false;
+			}
+
 			try {
-				available_providers = Ort::GetAvailableProviders();
+				auto ep_devices = env_->GetEpDevices();
+				std::vector<Ort::ConstEpDevice> target_devices;
+				for (const auto& device : ep_devices) {
+					if (std::string(device.EpName()) == ep_name) {
+						target_devices.push_back(device);
+					}
+				}
+				if (!target_devices.empty()) {
+					session_options.AppendExecutionProvider_V2(*env_, target_devices, ep_options);
+					return true;
+				}
 			} catch (...) {
 			}
 
-			auto has_ep = [&available_providers](const std::string& name) {
-				return std::find(available_providers.begin(), available_providers.end(), name) != available_providers.end();
-			};
+			return false;
+		};
 
-			auto try_append_catalog_ep = [this, &session_options](const char* ep_name,
-				const std::unordered_map<std::string, std::string>& ep_options = {}) -> bool {
-				if (!EnsureCatalogEpReady(env_.get(), ep_name)) {
-					return false;
+		auto try_append_dml = [&has_ep, &session_options, &selected_ep, &ep_appended](OrtDmlDeviceFilter filter, const char* ep_name) -> bool {
+			if (!has_ep("DmlExecutionProvider")) {
+				return false;
+			}
+
+			try {
+				const OrtDmlApi* dml_api = nullptr;
+				Ort::ThrowOnError(Ort::GetApi().GetExecutionProviderApi("DML", ORT_API_VERSION, reinterpret_cast<const void**>(&dml_api)));
+				if (dml_api != nullptr) {
+					OrtDmlDeviceOptions device_options;
+					device_options.Preference = OrtDmlPerformancePreference::HighPerformance;
+					device_options.Filter = filter;
+					Ort::ThrowOnError(dml_api->SessionOptionsAppendExecutionProvider_DML2(session_options, &device_options));
+					selected_ep = ep_name;
+					ep_appended = true;
+					return true;
 				}
+			} catch (...) {
+			}
+
+			return false;
+		};
+
+		auto try_append_npu_catalog_ep = [&]() -> bool {
+			if (try_append_catalog_ep("QNNExecutionProvider")) {
+				selected_ep = "QNNExecutionProvider";
+				ep_appended = true;
+				return true;
+			}
+
+			if (try_append_catalog_ep("VitisAIExecutionProvider")) {
+				selected_ep = "VitisAIExecutionProvider";
+				ep_appended = true;
+				return true;
+			}
+
+			if (try_append_catalog_ep("OpenVINOExecutionProvider")) {
+				selected_ep = "OpenVINOExecutionProvider";
+				ep_appended = true;
+				return true;
+			}
+
+			return false;
+		};
+
+		if (use_gpu) {
+			const bool has_discrete_gpu = IsDiscreteD3D11Device(device_.Get());
+			char dbg_gpu[256] = {};
+			snprintf(dbg_gpu, sizeof(dbg_gpu), "[OcrRecognizer] use_gpu=1, has_discrete_gpu=%d, vendor=%d\n", has_discrete_gpu ? 1 : 0, static_cast<int>(gpu_vendor_));
+			OutputDebugStringA(dbg_gpu);
+			ReportStatus("Trying OCR vendor execution providers...");
+
+			switch (gpu_vendor_) {
+			case GpuVendor::NVIDIA: {
+				std::unordered_map<std::string, std::string> trt_rtx_options = {
+					{"nv_max_workspace_size", "4294967296"},
+				};
 
 				try {
-					auto ep_devices = env_->GetEpDevices();
-					std::vector<Ort::ConstEpDevice> target_devices;
-					for (const auto& device : ep_devices) {
-						if (std::string(device.EpName()) == ep_name) {
-							target_devices.push_back(device);
-						}
-					}
-					if (!target_devices.empty()) {
-						session_options.AppendExecutionProvider_V2(*env_, target_devices, ep_options);
-						return true;
+					auto local_folder = winrt::Windows::Storage::ApplicationData::Current().LocalFolder();
+					std::wstring cache_path_w = local_folder.Path().c_str();
+					cache_path_w += L"\\trt_rtx_cache";
+					CreateDirectoryW(cache_path_w.c_str(), nullptr);
+					std::string cache_path_utf8 = ModelCompilationCache::WideToUtf8(cache_path_w);
+					if (!cache_path_utf8.empty()) {
+						trt_rtx_options["nv_runtime_cache_path"] = cache_path_utf8;
 					}
 				} catch (...) {
 				}
 
-				return false;
-			};
-
-			auto try_append_dml = [&has_ep, &session_options, &selected_ep, &ep_appended](OrtDmlDeviceFilter filter, const char* ep_name) -> bool {
-				if (!has_ep("DmlExecutionProvider")) {
-					return false;
-				}
-
-				try {
-					const OrtDmlApi* dml_api = nullptr;
-					Ort::ThrowOnError(Ort::GetApi().GetExecutionProviderApi("DML", ORT_API_VERSION, reinterpret_cast<const void**>(&dml_api)));
-					if (dml_api != nullptr) {
-						OrtDmlDeviceOptions device_options;
-						device_options.Preference = OrtDmlPerformancePreference::HighPerformance;
-						device_options.Filter = filter;
-						Ort::ThrowOnError(dml_api->SessionOptionsAppendExecutionProvider_DML2(session_options, &device_options));
-						selected_ep = ep_name;
-						ep_appended = true;
-						return true;
-					}
-				} catch (...) {
-				}
-
-				return false;
-			};
-
-			auto try_append_npu_catalog_ep = [&]() -> bool {
-				if (try_append_catalog_ep("QNNExecutionProvider")) {
-					selected_ep = "QNNExecutionProvider";
+				if (try_append_catalog_ep("NvTensorRTRTXExecutionProvider", trt_rtx_options)) {
+					selected_ep = "NvTensorRTRTXExecutionProvider";
 					ep_appended = true;
-					return true;
+					OutputDebugStringA("[OcrRecognizer] Vendor EP selected: NvTensorRTRTXExecutionProvider\n");
 				}
-
-				if (try_append_catalog_ep("VitisAIExecutionProvider")) {
-					selected_ep = "VitisAIExecutionProvider";
+				break;
+			}
+			case GpuVendor::AMD:
+				if (try_append_catalog_ep("MIGraphXExecutionProvider")) {
+					selected_ep = "MIGraphXExecutionProvider";
 					ep_appended = true;
-					return true;
+					OutputDebugStringA("[OcrRecognizer] Vendor EP selected: MIGraphXExecutionProvider\n");
 				}
-
+				break;
+			case GpuVendor::Intel:
 				if (try_append_catalog_ep("OpenVINOExecutionProvider")) {
 					selected_ep = "OpenVINOExecutionProvider";
 					ep_appended = true;
-					return true;
+					OutputDebugStringA("[OcrRecognizer] Vendor EP selected: OpenVINOExecutionProvider\n");
 				}
+				break;
+			default:
+				OutputDebugStringA("[OcrRecognizer] Unknown GPU vendor. Vendor EP direct selection skipped.\n");
+				break;
+			}
 
-				return false;
-			};
-
-			const bool has_discrete_gpu = IsDiscreteD3D11Device(device_.Get());
-			if (has_discrete_gpu) {
-				ReportStatus("Trying OCR dGPU execution providers...");
-
-				switch (gpu_vendor_) {
-				case GpuVendor::NVIDIA: {
-					std::unordered_map<std::string, std::string> trt_rtx_options = {
-						{"nv_max_workspace_size", "4294967296"},
-					};
-
-					char temp_path[MAX_PATH] = {};
-					if (GetTempPathA(MAX_PATH, temp_path) > 0) {
-						std::string cache_path(temp_path);
-						cache_path += "wol_ocr_trt_rtx_cache";
-						CreateDirectoryA(cache_path.c_str(), nullptr);
-						trt_rtx_options["nv_runtime_cache_path"] = cache_path;
-					}
-
-					if (try_append_catalog_ep("NvTensorRTRTXExecutionProvider", trt_rtx_options)) {
-						selected_ep = "NvTensorRTRTXExecutionProvider";
-						ep_appended = true;
-					}
-					break;
-				}
-				case GpuVendor::AMD:
-					if (try_append_catalog_ep("MIGraphXExecutionProvider")) {
-						selected_ep = "MIGraphXExecutionProvider";
-						ep_appended = true;
-					}
-					break;
-				case GpuVendor::Intel:
-					if (try_append_catalog_ep("OpenVINOExecutionProvider")) {
-						selected_ep = "OpenVINOExecutionProvider";
-						ep_appended = true;
-					}
-					break;
-				default:
-					break;
-				}
-
-				if (!ep_appended) {
-					try_append_dml(OrtDmlDeviceFilter::Gpu, "DmlExecutionProvider");
-				}
+			if (!ep_appended) {
+				OutputDebugStringA("[OcrRecognizer] Vendor EP unavailable. Trying DirectML GPU fallback.\n");
+				try_append_dml(OrtDmlDeviceFilter::Gpu, "DmlExecutionProvider");
 			}
 
 			if (!ep_appended) {
@@ -547,7 +754,19 @@ bool OcrRecognizer::LoadModel(const wchar_t* model_path, bool prefer_gpu)
 				ReportStatus("OCR NPU EP unavailable. Falling back to CPU execution provider...");
 			}
 		} else {
-			ReportStatus("OCR GPU EP disabled. Falling back to CPU execution provider...");
+			if (force_cpu_pipeline) {
+				ReportStatus("OCR force CPU pipeline enabled: trying NPU execution providers...");
+				if (!try_append_npu_catalog_ep()) {
+					#ifdef ENABLE_NPU_ADAPTER_ENUMERATION
+					try_append_dml(OrtDmlDeviceFilter::Npu, "DmlExecutionProvider(NPU)");
+					#endif
+				}
+				if (!ep_appended) {
+					ReportStatus("OCR force CPU pipeline: NPU EP unavailable. Falling back to CPU execution provider...");
+				}
+			} else {
+				ReportStatus("OCR GPU EP disabled. Falling back to CPU execution provider...");
+			}
 		}
 
 		std::string ep_display_name = NormalizeEpDisplayName(selected_ep);
@@ -559,9 +778,82 @@ bool OcrRecognizer::LoadModel(const wchar_t* model_path, bool prefer_gpu)
 			OutputDebugStringA("[OcrRecognizer] CPU EP (GPU EP not enabled)\n");
 		}
 
-		ReportStatus("Initializing OCR EP: %s", ep_display_name.c_str());
+		std::wstring session_model_path = model_path;
+		ModelCompilationCache::CacheDecision compile_cache_decision;
+		bool compile_cache_eligible = false;
+		if (ep_appended && ModelCompilationCache::SupportsPersistentCompileCache(selected_ep)) {
+			std::string cache_error;
+			if (ModelCompilationCache::PrepareCacheDecision(model_path, selected_ep, compile_cache_decision, cache_error)) {
+				compile_cache_eligible = true;
+				if (compile_cache_decision.has_valid_compiled_model) {
+					session_model_path = compile_cache_decision.compiled_model_path;
+					OutputDebugStringA("[OcrRecognizer] Persistent compile cache hit. Using compiled model.\n");
+					ReportStatus("OCR compiled cache hit: %s", ep_display_name.c_str());
+				} else {
+					char dbg_cache_miss[512] = {};
+					snprintf(dbg_cache_miss, sizeof(dbg_cache_miss), "[OcrRecognizer] Persistent compile cache miss (%s).\n", compile_cache_decision.reason.c_str());
+					OutputDebugStringA(dbg_cache_miss);
+					ReportStatus("Compiling OCR model for EP: %s", ep_display_name.c_str());
+					if (ModelCompilationCache::CompileModelToCache(*env_, session_options, compile_cache_decision, cache_error)) {
+						session_model_path = compile_cache_decision.compiled_model_path;
+						OutputDebugStringA("[OcrRecognizer] CompileModel succeeded. Using compiled model.\n");
+					} else {
+						char dbg_cache_compile_failed[512] = {};
+						snprintf(dbg_cache_compile_failed, sizeof(dbg_cache_compile_failed), "[OcrRecognizer] CompileModel failed (%s). Falling back to source model.\n", cache_error.c_str());
+						OutputDebugStringA(dbg_cache_compile_failed);
+						ReportStatus("OCR compile fallback to source model: %s", ep_display_name.c_str());
+						session_model_path = model_path;
+					}
+				}
+			} else {
+				char dbg_cache_prepare_failed[512] = {};
+				snprintf(dbg_cache_prepare_failed, sizeof(dbg_cache_prepare_failed), "[OcrRecognizer] Prepare compile cache failed (%s).\n", cache_error.c_str());
+				OutputDebugStringA(dbg_cache_prepare_failed);
+			}
+		}
 
-		session_ = std::make_shared<Ort::Session>(*env_, model_path, session_options);
+		ReportStatus("Initializing OCR EP: %s", ep_display_name.c_str());
+		auto create_session = [&](const std::wstring& path) {
+			return std::make_shared<Ort::Session>(*env_, path.c_str(), session_options);
+		};
+
+		try {
+			session_ = create_session(session_model_path);
+		}
+		catch (const Ort::Exception& ex) {
+			const bool attempted_compiled = compile_cache_eligible &&
+				!compile_cache_decision.compiled_model_path.empty() &&
+				IsSamePathInsensitive(session_model_path, compile_cache_decision.compiled_model_path);
+
+			if (!attempted_compiled) {
+				throw;
+			}
+
+			if (IsInvalidGraphException(ex)) {
+				OutputDebugStringA("[OcrRecognizer] Compiled model became invalid (INVALID_GRAPH). Recompiling cache.\n");
+				ReportStatus("OCR compiled model invalidated. Recompiling: %s", ep_display_name.c_str());
+				std::string remove_error;
+				ModelCompilationCache::RemoveCacheArtifacts(compile_cache_decision, remove_error);
+				std::string compile_error;
+				if (ModelCompilationCache::CompileModelToCache(*env_, session_options, compile_cache_decision, compile_error)) {
+					session_ = create_session(compile_cache_decision.compiled_model_path);
+					ReportStatus("OCR compiled cache regenerated: %s", ep_display_name.c_str());
+				} else {
+					char dbg_retry_fail[512] = {};
+					snprintf(dbg_retry_fail, sizeof(dbg_retry_fail), "[OcrRecognizer] Recompile after INVALID_GRAPH failed (%s). Fallback to source model.\n", compile_error.c_str());
+					OutputDebugStringA(dbg_retry_fail);
+					ReportStatus("OCR recompile failed. Fallback to source model: %s", ep_display_name.c_str());
+					session_ = create_session(model_path);
+				}
+			} else {
+				char dbg_compiled_load_fail[512] = {};
+				snprintf(dbg_compiled_load_fail, sizeof(dbg_compiled_load_fail), "[OcrRecognizer] Failed to load compiled model (%s). Falling back to source model.\n", ex.what());
+				OutputDebugStringA(dbg_compiled_load_fail);
+				ReportStatus("OCR compiled model load failed. Fallback to source model: %s", ep_display_name.c_str());
+				session_ = create_session(model_path);
+			}
+		}
+
 		ReportStatus("OCR EP ready: %s", ep_display_name.c_str());
 
 		input_names_.clear();
@@ -623,6 +915,29 @@ std::vector<OcrTrackResult> OcrRecognizer::Recognize(
 	}
 	auto readback_end = std::chrono::high_resolution_clock::now();
 	auto readback_ms = std::chrono::duration<double, std::milli>(readback_end - readback_start).count();
+
+	return RecognizeFromCpuBgra(frame_bgra.data(), frame_width, frame_height, track_rois, expand_pixels, max_rois_per_frame);
+}
+
+std::vector<OcrTrackResult> OcrRecognizer::RecognizeFromCpuBgra(
+	const uint8_t* bgra_data,
+	uint32_t frame_width,
+	uint32_t frame_height,
+	const std::vector<OcrTrackRoi>& track_rois,
+	int expand_pixels,
+	int max_rois_per_frame) const
+{
+	std::vector<OcrTrackResult> results;
+	if (!bgra_data || frame_width == 0 || frame_height == 0 || track_rois.empty() || !session_) {
+		return results;
+	}
+
+	auto total_start = std::chrono::high_resolution_clock::now();
+
+	std::vector<uint8_t> frame_bgra;
+	// bgra_data を直接使用するためコピーを回避
+	const size_t bgra_size = static_cast<size_t>(frame_width) * static_cast<size_t>(frame_height) * 4ull;
+	frame_bgra.assign(bgra_data, bgra_data + bgra_size);
 
 	std::vector<uint64_t> track_ids;
 	auto tensor_start = std::chrono::high_resolution_clock::now();
@@ -734,18 +1049,14 @@ std::vector<OcrTrackResult> OcrRecognizer::Recognize(
 
 	auto total_end = std::chrono::high_resolution_clock::now();
 	auto total_ms = std::chrono::duration<double, std::milli>(total_end - total_start).count();
-	const double accounted_ms = readback_ms + tensor_ms + pack_ms + run_ms + decode_ms;
-	const double other_ms = std::max(0.0, total_ms - accounted_ms);
 	char dbg[448] = {};
 	snprintf(dbg, sizeof(dbg),
-		"[OcrRecognizer] total=%.2f ms readback=%.2f ms tensor=%.2f ms pack=%.2f ms run=%.2f ms decode=%.2f ms other=%.2f ms frame=%ux%u req=%zu out=%zu\n",
+		"[OcrRecognizer] total=%.2f ms tensor=%.2f ms pack=%.2f ms run=%.2f ms decode=%.2f ms frame=%ux%u req=%zu out=%zu\n",
 		total_ms,
-		readback_ms,
 		tensor_ms,
 		pack_ms,
 		run_ms,
 		decode_ms,
-		other_ms,
 		frame_width,
 		frame_height,
 		track_rois.size(),
@@ -818,10 +1129,17 @@ std::vector<float> OcrRecognizer::BuildInputTensor(
 
 	const size_t batch = static_cast<size_t>(max_rois);
 	const size_t actual_count = std::min<size_t>(track_rois.size(), batch);
-	std::vector<float> input(batch * 3ull * static_cast<size_t>(kTargetHeight) * static_cast<size_t>(kMaxWidth), 0.0f);
+	const size_t sample_elements = 3ull * static_cast<size_t>(kTargetHeight) * static_cast<size_t>(kMaxWidth);
+	std::vector<float> input(batch * sample_elements, 0.0f);
 
 	out_track_ids.clear();
 	out_track_ids.assign(batch, 0);
+
+	if (bgra.empty() || frame_width == 0 || frame_height == 0) {
+		return input;
+	}
+
+	cv::Mat frameMat(static_cast<int>(frame_height), static_cast<int>(frame_width), CV_8UC4, const_cast<uint8_t*>(bgra.data()));
 
 	for (size_t i = 0; i < actual_count; ++i) {
 		const auto& item = track_rois[i];
@@ -833,35 +1151,43 @@ std::vector<float> OcrRecognizer::BuildInputTensor(
 		const int roi_w = std::max(1, x2 - x1);
 		const int roi_h = std::max(1, y2 - y1);
 
-		int resized_w = static_cast<int>(std::round((static_cast<float>(roi_w) * static_cast<float>(kTargetHeight)) / static_cast<float>(roi_h)));
+		cv::Rect roiRect(x1, y1, roi_w, roi_h);
+		roiRect = roiRect & cv::Rect(0, 0, static_cast<int>(frame_width), static_cast<int>(frame_height));
+		if (roiRect.width <= 0 || roiRect.height <= 0) {
+			continue;
+		}
+
+		cv::Mat roiBgra = frameMat(roiRect);
+
+		int resized_w = static_cast<int>(std::round((static_cast<float>(roiRect.width) * static_cast<float>(kTargetHeight)) / static_cast<float>(roiRect.height)));
 		resized_w = ClampInt(resized_w, 1, kMaxWidth);
 
-		const size_t base = i * 3ull * static_cast<size_t>(kTargetHeight) * static_cast<size_t>(kMaxWidth);
-		const size_t c_stride = static_cast<size_t>(kTargetHeight) * static_cast<size_t>(kMaxWidth);
+		cv::Mat resizedBgra;
+		cv::resize(roiBgra, resizedBgra, cv::Size(resized_w, kTargetHeight), 0, 0, cv::INTER_LINEAR);
 
-		for (int oy = 0; oy < kTargetHeight; ++oy) {
-			const float syf = (static_cast<float>(oy) + 0.5f) * static_cast<float>(roi_h) / static_cast<float>(kTargetHeight);
-			const int sy = ClampInt(y1 + static_cast<int>(syf), 0, static_cast<int>(frame_height) - 1);
+		// 左上寄せ、右側パディング用の kMaxWidth x kTargetHeight のキャンバスを作成
+		// ((0 - 127.5) / 127.5) = -1.0 ではなく、0埋め(黒)に対応するパディング(BGRA: 0,0,0,0)
+		cv::Mat canvas = cv::Mat::zeros(kTargetHeight, kMaxWidth, CV_8UC4);
+		resizedBgra.copyTo(canvas(cv::Rect(0, 0, resized_w, kTargetHeight)));
 
-			for (int ox = 0; ox < resized_w; ++ox) {
-				const float sxf = (static_cast<float>(ox) + 0.5f) * static_cast<float>(roi_w) / static_cast<float>(resized_w);
-				const int sx = ClampInt(x1 + static_cast<int>(sxf), 0, static_cast<int>(frame_width) - 1);
+		// PP-OCRの正規化: (px / 255.0 - 0.5) / 0.5 == (px - 127.5) / 127.5 == (px - 127.5) * (1 / 127.5)
+		// BGR順序（チャンネル0: B, 1: G, 2: R）
+		// cv::dnn::blobFromImage:
+		//   scalefactor = 1.0 / 127.5
+		//   mean = cv::Scalar(127.5, 127.5, 127.5)
+		//   swapRB = false (BGRAの先頭3チャンネルBGRを保持)
+		cv::Mat blob = cv::dnn::blobFromImage(
+			canvas,
+			1.0 / 127.5,
+			cv::Size(kMaxWidth, kTargetHeight),
+			cv::Scalar(127.5, 127.5, 127.5),
+			false, // swapRB = false
+			false, // crop
+			CV_32F
+		);
 
-				const size_t p = (static_cast<size_t>(sy) * static_cast<size_t>(frame_width) + static_cast<size_t>(sx)) * 4ull;
-				const float b = static_cast<float>(bgra[p + 0]) / 255.0f;
-				const float g = static_cast<float>(bgra[p + 1]) / 255.0f;
-				const float r = static_cast<float>(bgra[p + 2]) / 255.0f;
-
-				const float nb = (b - 0.5f) / 0.5f;
-				const float ng = (g - 0.5f) / 0.5f;
-				const float nr = (r - 0.5f) / 0.5f;
-
-				const size_t o = static_cast<size_t>(oy) * static_cast<size_t>(kMaxWidth) + static_cast<size_t>(ox);
-				input[base + (0ull * c_stride) + o] = nb;
-				input[base + (1ull * c_stride) + o] = ng;
-				input[base + (2ull * c_stride) + o] = nr;
-			}
-		}
+		float* dst = input.data() + (i * sample_elements);
+		std::memcpy(dst, blob.ptr<float>(), sample_elements * sizeof(float));
 
 		out_track_ids[i] = item.track_id;
 	}

@@ -1,7 +1,7 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
-  <Import Project="..\packages\Microsoft.Windows.AI.MachineLearning.2.2.12\build\native\Microsoft.Windows.AI.MachineLearning.props" Condition="Exists('..\packages\Microsoft.Windows.AI.MachineLearning.2.2.12\build\native\Microsoft.Windows.AI.MachineLearning.props')" />
-  <Import Project="..\packages\Microsoft.Windows.CppWinRT.3.0.260715.1\build\native\Microsoft.Windows.CppWinRT.props" Condition="Exists('..\packages\Microsoft.Windows.CppWinRT.3.0.260715.1\build\native\Microsoft.Windows.CppWinRT.props')" />
+  <Import Project="..\packages\Microsoft.Windows.CppWinRT.3.0.260818.1\build\native\Microsoft.Windows.CppWinRT.props" Condition="Exists('..\packages\Microsoft.Windows.CppWinRT.3.0.260818.1\build\native\Microsoft.Windows.CppWinRT.props')" />
+  <Import Project="..\packages\Microsoft.Windows.AI.MachineLearning.2.3.42\build\native\Microsoft.Windows.AI.MachineLearning.props" Condition="Exists('..\packages\Microsoft.Windows.AI.MachineLearning.2.3.42\build\native\Microsoft.Windows.AI.MachineLearning.props')" />
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
       <Configuration>Debug</Configuration>
@@ -121,18 +121,16 @@
       <LanguageStandard>stdcpp20</LanguageStandard>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
-      <!-- FFmpeg GPL shared DLL 動的リンク設定 -->
-      <AdditionalIncludeDirectories>D:\\ffmpeg_dist_4wol\include;D:\\eigen-5.0.0;$(ProjectDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <!-- FFmpeg GPL shared DLL 動的リンク設定 + OpenCV 動的リンク (opencv_world) -->
+      <AdditionalIncludeDirectories>D:\ffmpeg_dist_4wol\include;D:\eigen-5.0.0;D:\opencv-4.13.0_build_for_wol2\install\include;$(ProjectDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <!-- FFmpeg GPL shared DLL 動的リンク設定 -->
-      <AdditionalDependencies>avcodec.lib;avformat.lib;avutil.lib;swscale.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>D:\\ffmpeg_dist_4wol\\bin;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <!-- FFmpeg GPL shared DLL 動的リンク設定 + OpenCV 動的リンク (opencv_world) -->
+      <AdditionalDependencies>avcodec.lib;avformat.lib;avutil.lib;swscale.lib;WindowsApp.lib;opencv_world4130.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>D:\ffmpeg_dist_4wol\bin;D:\opencv-4.13.0_build_for_wol2\install\x64\vc17\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <EnableUAC>false</EnableUAC>
-      <!-- WinML 2.0 関連 -->
-      <AdditionalDependencies>avcodec.lib;avformat.lib;avutil.lib;swscale.lib;WindowsApp.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <Manifest>
       <EnableSegmentHeap>true</EnableSegmentHeap>
@@ -149,16 +147,16 @@
       <LanguageStandard>stdcpp20</LanguageStandard>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
-      <!-- FFmpeg GPL shared DLL 動的リンク設定 -->
-      <AdditionalIncludeDirectories>D:\\ffmpeg_dist_4wol\include;D:\\eigen-5.0.0;$(ProjectDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <!-- FFmpeg GPL shared DLL 動的リンク設定 + OpenCV 動的リンク (opencv_world) -->
+      <AdditionalIncludeDirectories>D:\ffmpeg_dist_4wol\include;D:\eigen-5.0.0;D:\opencv-4.13.0_build_for_wol2\install\include;$(ProjectDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <EnableUAC>false</EnableUAC>
-      <!-- FFmpeg GPL shared DLL 動的リンク設定 -->
-      <AdditionalDependencies>avcodec.lib;avformat.lib;avutil.lib;swscale.lib;WindowsApp.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>D:\\ffmpeg_dist_4wol\\bin;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <!-- FFmpeg GPL shared DLL 動的リンク設定 + OpenCV 動的リンク (opencv_world) -->
+      <AdditionalDependencies>avcodec.lib;avformat.lib;avutil.lib;swscale.lib;WindowsApp.lib;opencv_world4130.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>D:\ffmpeg_dist_4wol\bin;D:\opencv-4.13.0_build_for_wol2\install\x64\vc17\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <Manifest>
       <EnableSegmentHeap>true</EnableSegmentHeap>
@@ -182,6 +180,7 @@
     <ClInclude Include="D3D12SharedResourceManager.h" />
     <ClInclude Include="DebugLog.h" />
     <ClInclude Include="MaskShader.h" />
+    <ClInclude Include="ModelCompilationCache.h" />
     <ClInclude Include="PreprocessShader.h" />
     <ClInclude Include="PreviewPipeline.h" />
     <ClInclude Include="framework.h" />
@@ -190,6 +189,9 @@
     <ClInclude Include="VideoPipeline.h" />
     <ClInclude Include="OcrRecognizer.h" />
     <ClInclude Include="TextMatchUtils.h" />
+    <ClInclude Include="HardwareAcceleratorChecker.h" />
+    <ClInclude Include="CpuPreprocessor.h" />
+    <ClInclude Include="CpuPostprocessor.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="D3D11DeviceManager.cpp" />
@@ -211,24 +213,18 @@
     <ClCompile Include="Rect.cpp" />
     <ClCompile Include="OcrRecognizer.cpp" />
     <ClCompile Include="TextMatchUtils.cpp" />
+    <ClCompile Include="HardwareAcceleratorChecker.cpp" />
+    <ClCompile Include="CpuPreprocessor.cpp" />
+    <ClCompile Include="CpuPostprocessor.cpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
-    <Import Project="..\packages\Microsoft.Windows.CppWinRT.3.0.260715.1\build\native\Microsoft.Windows.CppWinRT.targets" Condition="Exists('..\packages\Microsoft.Windows.CppWinRT.3.0.260715.1\build\native\Microsoft.Windows.CppWinRT.targets')" />
-    <Import Project="..\packages\Microsoft.Windows.AI.MachineLearning.2.2.12\build\native\Microsoft.Windows.AI.MachineLearning.targets" Condition="Exists('..\packages\Microsoft.Windows.AI.MachineLearning.2.2.12\build\native\Microsoft.Windows.AI.MachineLearning.targets')" />
+    <Import Project="..\packages\Microsoft.Windows.AI.MachineLearning.2.3.42\build\native\Microsoft.Windows.AI.MachineLearning.targets" Condition="Exists('..\packages\Microsoft.Windows.AI.MachineLearning.2.3.42\build\native\Microsoft.Windows.AI.MachineLearning.targets')" />
+    <Import Project="..\packages\Microsoft.Windows.CppWinRT.3.0.260818.1\build\native\Microsoft.Windows.CppWinRT.targets" Condition="Exists('..\packages\Microsoft.Windows.CppWinRT.3.0.260818.1\build\native\Microsoft.Windows.CppWinRT.targets')" />
   </ImportGroup>
-  <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">
-    <PropertyGroup>
-      <ErrorText>このプロジェクトは、このコンピューター上にない NuGet パッケージを参照しています。それらのパッケージをダウンロードするには、[NuGet パッケージの復元] を使用します。詳細については、http://go.microsoft.com/fwlink/?LinkID=322105 を参照してください。見つからないファイルは {0} です。</ErrorText>
-    </PropertyGroup>
-    <Error Condition="!Exists('..\packages\Microsoft.Windows.CppWinRT.3.0.260715.1\build\native\Microsoft.Windows.CppWinRT.props')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\Microsoft.Windows.CppWinRT.3.0.260715.1\build\native\Microsoft.Windows.CppWinRT.props'))" />
-    <Error Condition="!Exists('..\packages\Microsoft.Windows.CppWinRT.3.0.260715.1\build\native\Microsoft.Windows.CppWinRT.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\Microsoft.Windows.CppWinRT.3.0.260715.1\build\native\Microsoft.Windows.CppWinRT.targets'))" />
-    <Error Condition="!Exists('..\packages\Microsoft.Windows.AI.MachineLearning.2.2.12\build\native\Microsoft.Windows.AI.MachineLearning.props')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\Microsoft.Windows.AI.MachineLearning.2.2.12\build\native\Microsoft.Windows.AI.MachineLearning.props'))" />
-    <Error Condition="!Exists('..\packages\Microsoft.Windows.AI.MachineLearning.2.2.12\build\native\Microsoft.Windows.AI.MachineLearning.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\Microsoft.Windows.AI.MachineLearning.2.2.12\build\native\Microsoft.Windows.AI.MachineLearning.targets'))" />
-  </Target>
   <!-- Build後にC# 実行フォルダへDLLを自動コピー -->
   <Target Name="CopyDllToOutputFolders" AfterTargets="Link">
     <MakeDir Directories="..\App12\App12 (Package)\bin\$(Platform)\$(Configuration)" />
@@ -238,5 +234,13 @@
     <MakeDir Directories="..\App12\App12\bin\$(Platform)\$(Configuration)\net8.0-windows10.0.26100.0" />
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="..\App12\App12\bin\$(Platform)\$(Configuration)\net8.0-windows10.0.26100.0" SkipUnchangedFiles="false" />
   </Target>
+  <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">
+    <PropertyGroup>
+      <ErrorText>このプロジェクトは、このコンピューター上にない NuGet パッケージを参照しています。それらのパッケージをダウンロードするには、[NuGet パッケージの復元] を使用します。詳細については、http://go.microsoft.com/fwlink/?LinkID=322105 を参照してください。見つからないファイルは {0} です。</ErrorText>
+    </PropertyGroup>
+    <Error Condition="!Exists('..\packages\Microsoft.Windows.AI.MachineLearning.2.3.42\build\native\Microsoft.Windows.AI.MachineLearning.props')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\Microsoft.Windows.AI.MachineLearning.2.3.42\build\native\Microsoft.Windows.AI.MachineLearning.props'))" />
+    <Error Condition="!Exists('..\packages\Microsoft.Windows.AI.MachineLearning.2.3.42\build\native\Microsoft.Windows.AI.MachineLearning.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\Microsoft.Windows.AI.MachineLearning.2.3.42\build\native\Microsoft.Windows.AI.MachineLearning.targets'))" />
+    <Error Condition="!Exists('..\packages\Microsoft.Windows.CppWinRT.3.0.260818.1\build\native\Microsoft.Windows.CppWinRT.props')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\Microsoft.Windows.CppWinRT.3.0.260818.1\build\native\Microsoft.Windows.CppWinRT.props'))" />
+    <Error Condition="!Exists('..\packages\Microsoft.Windows.CppWinRT.3.0.260818.1\build\native\Microsoft.Windows.CppWinRT.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\packages\Microsoft.Windows.CppWinRT.3.0.260818.1\build\native\Microsoft.Windows.CppWinRT.targets'))" />
+  </Target>
 </Project>
-

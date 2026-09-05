@@ -6,9 +6,13 @@
 #include "MaskShader.h"
 #include "ByteTrackInterop.h"
 #include "OcrRecognizer.h"
+#include "CpuPreprocessor.h"
+#include "CpuPostprocessor.h"
 
 #include <d3d11.h>
 #include <wrl/client.h>
+#include <opencv2/core.hpp>
+#include <opencv2/imgcodecs.hpp>
 
 // FFmpeg
 extern "C" {
@@ -166,6 +170,14 @@ private:
 
     // マスクシェーダー
     MaskShader mask_shader_;
+
+    // CPU / OpenCV パイプライン
+    bool use_cpu_pipeline_ = false;
+    CpuPreprocessor cpu_preprocessor_;
+    CpuPostprocessor cpu_postprocessor_;
+    cv::Mat cached_cpu_frame_bgra_;
+    cv::Mat cached_cpu_preview_output_;
+    cv::Mat cached_watermark_bgra_;
 
     // ファイル情報
     bool is_video_;

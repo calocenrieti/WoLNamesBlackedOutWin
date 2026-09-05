@@ -35,14 +35,15 @@
                     <TextBlock Grid.Column="0" VerticalAlignment="Center" Text="WoLNamesBlackedOut"  Style="{StaticResource HeaderTextBlockStyle}" FontSize="24" FontWeight="Black" Margin="16,0,0,0"/>
 
                     <CommandBar Grid.Column="1" Background="Transparent" IsOpen="False" HorizontalAlignment="Left" DefaultLabelPosition="Right">
-                        <AppBarButton x:Uid="MoreAppBarButton" Icon="More" Margin="150,0,0,0" ToolTipService.ToolTip="More...">
+                        <AppBarButton x:Name="MoreAppBarButton" x:Uid="MoreAppBarButton" Icon="More" Margin="150,0,0,0" ToolTipService.ToolTip="More...">
                             <AppBarButton.Flyout>
-                                <MenuFlyout >
-                                    <ToggleMenuFlyoutItem x:Name="DebugLogExport" x:Uid="DebugLogExport" Text="Debug Log Export" IsChecked="False"/>
-                                    <ToggleMenuFlyoutItem x:Name="LanguageJP" x:Uid="LanguageJP" Text="LanguageJP" IsChecked="True" Click="LanguageJP_Click"/>
-                                    <MenuFlyoutItem x:Name="LicenseButton" x:Uid="LicenseButton" Text="License" Click="LicenseButton_Click"/>
+                                    <MenuFlyout >
+                                        <ToggleMenuFlyoutItem x:Name="ForceCpuPipeline" x:Uid="ForceCpuPipeline" Text="Force CPU pipeline" IsChecked="False" Click="ForceCpuPipeline_Click"/>
+                                        <ToggleMenuFlyoutItem x:Name="DebugLogExport" x:Uid="DebugLogExport" Text="Debug Log Export" IsChecked="False"/>
+                                        <ToggleMenuFlyoutItem x:Name="LanguageJP" x:Uid="LanguageJP" Text="LanguageJP" IsChecked="True" Click="LanguageJP_Click"/>
                                     <MenuFlyoutSeparator/>
-                                    <MenuFlyoutItem x:Uid="AboutMenuItem" Text="About WoLNamesBlackedOut" Click="AboutButton_Click"/>
+                                        <MenuFlyoutItem x:Name="LicenseButton" x:Uid="LicenseButton" Text="License" Click="LicenseButton_Click"/>
+                                        <MenuFlyoutItem x:Uid="AboutMenuItem" Text="About WoLNamesBlackedOut" Click="AboutButton_Click"/>
                                 </MenuFlyout>
                             </AppBarButton.Flyout>
                         </AppBarButton>
@@ -156,8 +157,8 @@
                             <StackPanel>
                                 <CheckBox x:Uid="CropEnabledCheckBox" x:Name="CropEnabledCheckBox" Content="クロップを有効にする" IsChecked="False" Margin="0,0,8,0" Checked="CropEnabledCheckBox_Checked" Unchecked="CropEnabledCheckBox_Checked" />
                             </StackPanel>
-                            <StackPanel Orientation="Horizontal" Margin="8,0,0,0" VerticalAlignment="Center">
-                            <NumberBox x:Uid="CropTopNumberBox" x:Name="CropTopNumberBox" Header="上( px )" Value="0" Minimum="0" Maximum="0" ValueChanged="CropNumberBox_ValueChanged" Width="70" SpinButtonPlacementMode="Compact" SmallChange="1" LargeChange="10" />
+                            <StackPanel Orientation="Horizontal" Margin="8,0,0,0" VerticalAlignment="Center" Visibility="Collapsed">
+                                <NumberBox x:Uid="CropTopNumberBox" x:Name="CropTopNumberBox" Header="上( px )" Value="0" Minimum="0" Maximum="0" ValueChanged="CropNumberBox_ValueChanged" Width="70" SpinButtonPlacementMode="Compact" SmallChange="1" LargeChange="10" />
                                 <NumberBox x:Uid="CropLeftNumberBox" x:Name="CropLeftNumberBox" Header="左( px )" Value="0" Minimum="0" Maximum="0" ValueChanged="CropNumberBox_ValueChanged" Width="70" SpinButtonPlacementMode="Compact" Margin="8,0,0,0" SmallChange="1" LargeChange="10" />
                                 <NumberBox x:Uid="CropRightNumberBox" x:Name="CropRightNumberBox" Header="右( px )" Value="0" Minimum="0" Maximum="0" ValueChanged="CropNumberBox_ValueChanged" Width="70" SpinButtonPlacementMode="Compact" Margin="8,0,0,0" SmallChange="1" LargeChange="10" />
                                 <NumberBox x:Uid="CropBottomNumberBox" x:Name="CropBottomNumberBox" Header="下( px )" Value="0" Minimum="0" Maximum="0" ValueChanged="CropNumberBox_ValueChanged" Width="70" SpinButtonPlacementMode="Compact" Margin="8,0,0,0" SmallChange="1" LargeChange="10" />

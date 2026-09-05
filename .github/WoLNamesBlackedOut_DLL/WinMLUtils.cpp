@@ -1,11 +1,38 @@
 #include "pch.h"
 #include "WinMLUtils.h"
 #include "CoreTypes.h"
+#include "ModelCompilationCache.h"
 #include <iostream>
 #include <mutex>
 #include <winml/dml_provider_factory.h>
 extern "C" {
 #include <libswscale/swscale.h>
+}
+
+bool IsInvalidGraphException(const Ort::Exception& ex) {
+	if (ex.GetOrtErrorCode() == ORT_INVALID_GRAPH) {
+		return true;
+	}
+
+	std::string message = ex.what();
+	std::transform(message.begin(), message.end(), message.begin(), [](unsigned char c) {
+		return static_cast<char>(std::toupper(c));
+	});
+	return message.find("INVALID_GRAPH") != std::string::npos;
+}
+
+bool IsSamePathInsensitive(const std::wstring& lhs, const std::wstring& rhs) {
+	if (lhs.size() != rhs.size()) {
+		return false;
+	}
+
+	for (size_t i = 0; i < lhs.size(); ++i) {
+		if (towlower(lhs[i]) != towlower(rhs[i])) {
+			return false;
+		}
+	}
+
+	return true;
 }
 
 namespace {
@@ -76,10 +103,21 @@ std::string WideToUtf8(const wchar_t* value) {
 	return utf8;
 }
 
-std::string BuildWinMLSessionCacheKey(const wchar_t* model_path, WoLNamesBlackedOut::Core::GpuVendor vendor) {
+bool IsTruthyEnv(const char* name) {
+	char value[32] = {};
+	DWORD got = GetEnvironmentVariableA(name, value, static_cast<DWORD>(sizeof(value)));
+	if (got == 0 || got >= sizeof(value)) {
+		return false;
+	}
+	return (value[0] == '1') || (_stricmp(value, "true") == 0);
+}
+
+std::string BuildWinMLSessionCacheKey(const wchar_t* model_path, WoLNamesBlackedOut::Core::GpuVendor vendor, bool force_cpu_pipeline) {
 	std::string key = WideToUtf8(model_path);
 	key += "|gpu=";
 	key += std::to_string(static_cast<int>(vendor));
+	key += "|forcecpu=";
+	key += force_cpu_pipeline ? "1" : "0";
 	return key;
 }
 
@@ -370,7 +408,29 @@ bool WinMLUtils::EnsureEpReady(const char* provider_name) {
                 } catch (const Ort::Exception& ex) {
                     snprintf(dbg, sizeof(dbg), "[WinMLUtils] RegisterExecutionProviderLibrary failed: %s\n", ex.what());
                     OutputDebugStringA(dbg);
-                    result = false;
+
+					bool visible_in_ep_devices = false;
+					try {
+						auto ep_devices = env_->GetEpDevices();
+						for (const auto& device : ep_devices) {
+							if (std::string(device.EpName()) == provider_name) {
+								visible_in_ep_devices = true;
+								break;
+							}
+						}
+					} catch (const Ort::Exception& check_ex) {
+						snprintf(dbg, sizeof(dbg), "[WinMLUtils] GetEpDevices check failed after registration error: %s\n", check_ex.what());
+						OutputDebugStringA(dbg);
+					}
+
+					if (visible_in_ep_devices) {
+						snprintf(dbg, sizeof(dbg), "[WinMLUtils] Provider is visible in GetEpDevices despite registration failure: %s\n", provider_name);
+						OutputDebugStringA(dbg);
+						ReportStatus("%s provider is visible and will be used", provider_display_name.c_str());
+						result = true;
+					} else {
+						result = false;
+					}
                 }
             }
         } else {
@@ -398,7 +458,13 @@ bool WinMLUtils::LoadModel(const wchar_t* model_path) {
 		env_ = GetSharedOrtEnv();
 	}
 
-	const std::string cache_key = BuildWinMLSessionCacheKey(model_path, gpu_vendor_);
+	const bool force_cpu_pipeline = IsTruthyEnv("WOL_FORCE_CPU_PIPELINE");
+	{
+		char dbg_force[128];
+		snprintf(dbg_force, sizeof(dbg_force), "[WinMLUtils] force_cpu_pipeline=%d\n", force_cpu_pipeline ? 1 : 0);
+		OutputDebugStringA(dbg_force);
+	}
+	const std::string cache_key = BuildWinMLSessionCacheKey(model_path, gpu_vendor_, force_cpu_pipeline);
 	std::lock_guard<std::mutex> build_lock(GetWinMLSessionBuildMutex());
 	{
 		auto& session_cache = GetWinMLSessionCache();
@@ -480,7 +546,8 @@ bool WinMLUtils::LoadModel(const wchar_t* model_path) {
 			return false;
 		};
 
-		// dGPU -> NPU -> CPU の順でフォールバック。
+		// 通常時: dGPU -> NPU -> CPU の順でフォールバック。
+		// 強制CPU時: GPU EPは選択せず、NPU -> CPU の順でフォールバック。
 		// カタログEP（NvTensorRTRTX/MIGraphX/OpenVINO/QNN/VitisAI）は EnsureEpReady + AppendExecutionProvider_V2 を使用。
 		// 組み込みEP（DirectML）は DML2 デバイスフィルタを使用。
 		std::string selected_ep;
@@ -540,81 +607,86 @@ bool WinMLUtils::LoadModel(const wchar_t* model_path) {
 			return false;
 		};
 
-		const bool has_discrete_gpu = IsDiscreteD3D11Device(device_.Get());
-		if (has_discrete_gpu) {
-			ReportStatus("Trying dGPU execution providers...");
+		if (force_cpu_pipeline) {
+			OutputDebugStringA("[WinMLUtils] WOL_FORCE_CPU_PIPELINE=1: skip dGPU EP selection, prefer NPU then CPU\n");
+			ReportStatus("Force CPU pipeline enabled: trying NPU execution providers...");
+		} else {
+			const bool has_discrete_gpu = IsDiscreteD3D11Device(device_.Get());
+			if (has_discrete_gpu) {
+				ReportStatus("Trying dGPU execution providers...");
 
-			switch (gpu_vendor_) {
-			case GpuVendor::NVIDIA: {
-				std::unordered_map<std::string, std::string> trt_rtx_options = {
-					{"nv_profile_min_shapes", "images:1x3x736x1280"},
-					{"nv_profile_max_shapes", "images:1x3x736x1280"},
-					{"nv_profile_opt_shapes", "images:1x3x736x1280"},
-					{"nv_max_workspace_size", "4294967296"},
-				};
+				switch (gpu_vendor_) {
+				case GpuVendor::NVIDIA: {
+					std::unordered_map<std::string, std::string> trt_rtx_options = {
+						{"nv_profile_min_shapes", "images:1x3x736x1280"},
+						{"nv_profile_max_shapes", "images:1x3x736x1280"},
+						{"nv_profile_opt_shapes", "images:1x3x736x1280"},
+						{"nv_max_workspace_size", "4294967296"},
+					};
 
-				std::string cache_path_str;
-				try {
-					auto local_folder = winrt::Windows::Storage::ApplicationData::Current().LocalFolder();
-					std::wstring cache_path_w = local_folder.Path().c_str();
-					cache_path_w += L"\\trt_rtx_cache";
-					CreateDirectoryW(cache_path_w.c_str(), nullptr);
-					int utf8_len = WideCharToMultiByte(CP_UTF8, 0, cache_path_w.c_str(), -1, nullptr, 0, nullptr, nullptr);
-					if (utf8_len > 0) {
-						cache_path_str.resize(utf8_len - 1);
-						WideCharToMultiByte(CP_UTF8, 0, cache_path_w.c_str(), -1, cache_path_str.data(), utf8_len, nullptr, nullptr);
+					std::string cache_path_str;
+					try {
+						auto local_folder = winrt::Windows::Storage::ApplicationData::Current().LocalFolder();
+						std::wstring cache_path_w = local_folder.Path().c_str();
+						cache_path_w += L"\\trt_rtx_cache";
+						CreateDirectoryW(cache_path_w.c_str(), nullptr);
+						int utf8_len = WideCharToMultiByte(CP_UTF8, 0, cache_path_w.c_str(), -1, nullptr, 0, nullptr, nullptr);
+						if (utf8_len > 0) {
+							cache_path_str.resize(utf8_len - 1);
+							WideCharToMultiByte(CP_UTF8, 0, cache_path_w.c_str(), -1, cache_path_str.data(), utf8_len, nullptr, nullptr);
+						}
+						trt_rtx_options["nv_runtime_cache_path"] = cache_path_str;
+						char dbg[512];
+						snprintf(dbg, sizeof(dbg), "[WinMLUtils] TensorRT-RTX runtime cache (LocalFolder): %s\n", cache_path_str.c_str());
+						OutputDebugStringA(dbg);
 					}
-					trt_rtx_options["nv_runtime_cache_path"] = cache_path_str;
-					char dbg[512];
-					snprintf(dbg, sizeof(dbg), "[WinMLUtils] TensorRT-RTX runtime cache (LocalFolder): %s\n", cache_path_str.c_str());
-					OutputDebugStringA(dbg);
-				}
-				catch (...) {
-					char cache_path[MAX_PATH];
-					if (GetModuleFileNameA(nullptr, cache_path, MAX_PATH)) {
-						char* last_slash = strrchr(cache_path, '\\');
-						if (last_slash) {
-							*(last_slash + 1) = '\0';
-							strcat_s(cache_path, sizeof(cache_path), "trt_rtx_cache");
-							CreateDirectoryA(cache_path, nullptr);
-							trt_rtx_options["nv_runtime_cache_path"] = std::string(cache_path);
-							char dbg[512];
-							snprintf(dbg, sizeof(dbg), "[WinMLUtils] TensorRT-RTX runtime cache (fallback): %s\n", cache_path);
-							OutputDebugStringA(dbg);
+					catch (...) {
+						char cache_path[MAX_PATH];
+						if (GetModuleFileNameA(nullptr, cache_path, MAX_PATH)) {
+							char* last_slash = strrchr(cache_path, '\\');
+							if (last_slash) {
+								*(last_slash + 1) = '\0';
+								strcat_s(cache_path, sizeof(cache_path), "trt_rtx_cache");
+								CreateDirectoryA(cache_path, nullptr);
+								trt_rtx_options["nv_runtime_cache_path"] = std::string(cache_path);
+								char dbg[512];
+								snprintf(dbg, sizeof(dbg), "[WinMLUtils] TensorRT-RTX runtime cache (fallback): %s\n", cache_path);
+								OutputDebugStringA(dbg);
+							}
 						}
 					}
+
+					if (try_append_catalog_ep("NvTensorRTRTXExecutionProvider", trt_rtx_options)) {
+						selected_ep = "NvTensorRTRTXExecutionProvider";
+						ep_reason = "NVIDIA GPU: TensorRT-RTX selected (profile shapes + 4GB workspace + runtime cache)";
+						ep_appended = true;
+					}
+					break;
+				}
+				case GpuVendor::AMD:
+					if (try_append_catalog_ep("MIGraphXExecutionProvider")) {
+						selected_ep = "MIGraphXExecutionProvider";
+						ep_reason = "AMD GPU: MIGraphX selected";
+						ep_appended = true;
+					}
+					break;
+				case GpuVendor::Intel:
+					if (try_append_catalog_ep("OpenVINOExecutionProvider")) {
+						selected_ep = "OpenVINOExecutionProvider";
+						ep_reason = "Intel GPU: OpenVINO selected";
+						ep_appended = true;
+					}
+					break;
+				default:
+					break;
 				}
 
-				if (try_append_catalog_ep("NvTensorRTRTXExecutionProvider", trt_rtx_options)) {
-					selected_ep = "TensorRT-RTX";
-				ep_reason = "NVIDIA GPU: TensorRT-RTX selected (profile shapes + 4GB workspace + runtime cache)";
-					ep_appended = true;
+				if (!ep_appended) {
+					try_append_dml(OrtDmlDeviceFilter::Gpu, "DmlExecutionProvider", "dGPU: DirectML selected");
 				}
-				break;
+			} else {
+				OutputDebugStringA("[WinMLUtils] dGPU not detected from current D3D11 device; skipping dGPU EP selection\n");
 			}
-			case GpuVendor::AMD:
-				if (try_append_catalog_ep("MIGraphXExecutionProvider")) {
-					selected_ep = "MIGraphXExecutionProvider";
-				ep_reason = "AMD GPU: MIGraphX selected";
-					ep_appended = true;
-				}
-				break;
-			case GpuVendor::Intel:
-				if (try_append_catalog_ep("OpenVINOExecutionProvider")) {
-					selected_ep = "OpenVINOExecutionProvider";
-				ep_reason = "Intel GPU: OpenVINO selected";
-					ep_appended = true;
-				}
-				break;
-			default:
-				break;
-			}
-
-			if (!ep_appended) {
-				try_append_dml(OrtDmlDeviceFilter::Gpu, "DmlExecutionProvider", "dGPU: DirectML selected");
-			}
-		} else {
-			OutputDebugStringA("[WinMLUtils] dGPU not detected from current D3D11 device; skipping dGPU EP selection\n");
 		}
 
 		if (!ep_appended) {
@@ -641,8 +713,84 @@ bool WinMLUtils::LoadModel(const wchar_t* model_path) {
 		}
 
 		std::string ep_display_name = NormalizeEpDisplayName(selected_ep);
+
+		std::wstring session_model_path = model_path;
+		ModelCompilationCache::CacheDecision compile_cache_decision;
+		bool compile_cache_eligible = false;
+		if (ep_appended && ModelCompilationCache::SupportsPersistentCompileCache(selected_ep)) {
+			std::string cache_error;
+			if (ModelCompilationCache::PrepareCacheDecision(model_path, selected_ep, compile_cache_decision, cache_error)) {
+				compile_cache_eligible = true;
+				if (compile_cache_decision.has_valid_compiled_model) {
+					session_model_path = compile_cache_decision.compiled_model_path;
+					OutputDebugStringA("[WinMLUtils] Persistent compile cache hit. Using compiled model.\n");
+					ReportStatus("Compiled cache hit: %s", ep_display_name.c_str());
+				} else {
+					char dbg_cache_miss[512] = {};
+					snprintf(dbg_cache_miss, sizeof(dbg_cache_miss), "[WinMLUtils] Persistent compile cache miss (%s).\n", compile_cache_decision.reason.c_str());
+					OutputDebugStringA(dbg_cache_miss);
+					ReportStatus("Compiling model for EP: %s", ep_display_name.c_str());
+					if (ModelCompilationCache::CompileModelToCache(*env_, session_options, compile_cache_decision, cache_error)) {
+						session_model_path = compile_cache_decision.compiled_model_path;
+						OutputDebugStringA("[WinMLUtils] CompileModel succeeded. Using compiled model.\n");
+					} else {
+						char dbg_cache_compile_failed[512] = {};
+						snprintf(dbg_cache_compile_failed, sizeof(dbg_cache_compile_failed), "[WinMLUtils] CompileModel failed (%s). Falling back to source model.\n", cache_error.c_str());
+						OutputDebugStringA(dbg_cache_compile_failed);
+						ReportStatus("Compile fallback to source model: %s", ep_display_name.c_str());
+						session_model_path = model_path;
+					}
+				}
+			} else {
+				char dbg_cache_prepare_failed[512] = {};
+				snprintf(dbg_cache_prepare_failed, sizeof(dbg_cache_prepare_failed), "[WinMLUtils] Prepare compile cache failed (%s).\n", cache_error.c_str());
+				OutputDebugStringA(dbg_cache_prepare_failed);
+			}
+		}
+
 		ReportStatus("Initializing EP: %s", ep_display_name.c_str());
-		auto created_session = std::make_shared<Ort::Session>(*env_, model_path, session_options);
+		auto create_session = [&](const std::wstring& path) {
+			return std::make_shared<Ort::Session>(*env_, path.c_str(), session_options);
+		};
+
+		std::shared_ptr<Ort::Session> created_session;
+		try {
+			created_session = create_session(session_model_path);
+		}
+		catch (const Ort::Exception& ex) {
+			const bool attempted_compiled = compile_cache_eligible &&
+				!compile_cache_decision.compiled_model_path.empty() &&
+				IsSamePathInsensitive(session_model_path, compile_cache_decision.compiled_model_path);
+
+			if (!attempted_compiled) {
+				throw;
+			}
+
+			if (IsInvalidGraphException(ex)) {
+				OutputDebugStringA("[WinMLUtils] Compiled model became invalid (INVALID_GRAPH). Recompiling cache.\n");
+				ReportStatus("Compiled model invalidated. Recompiling: %s", ep_display_name.c_str());
+				std::string remove_error;
+				ModelCompilationCache::RemoveCacheArtifacts(compile_cache_decision, remove_error);
+				std::string compile_error;
+				if (ModelCompilationCache::CompileModelToCache(*env_, session_options, compile_cache_decision, compile_error)) {
+					created_session = create_session(compile_cache_decision.compiled_model_path);
+					ReportStatus("Compiled cache regenerated: %s", ep_display_name.c_str());
+				} else {
+					char dbg_retry_fail[512] = {};
+					snprintf(dbg_retry_fail, sizeof(dbg_retry_fail), "[WinMLUtils] Recompile after INVALID_GRAPH failed (%s). Fallback to source model.\n", compile_error.c_str());
+					OutputDebugStringA(dbg_retry_fail);
+					ReportStatus("Recompile failed. Fallback to source model: %s", ep_display_name.c_str());
+					created_session = create_session(model_path);
+				}
+			} else {
+				char dbg_compiled_load_fail[512] = {};
+				snprintf(dbg_compiled_load_fail, sizeof(dbg_compiled_load_fail), "[WinMLUtils] Failed to load compiled model (%s). Falling back to source model.\n", ex.what());
+				OutputDebugStringA(dbg_compiled_load_fail);
+				ReportStatus("Compiled model load failed. Fallback to source model: %s", ep_display_name.c_str());
+				created_session = create_session(model_path);
+			}
+		}
+
 		session_ = created_session;
 		ReportStatus("EP ready: %s", ep_display_name.c_str());
 
@@ -1104,6 +1252,60 @@ void WinMLUtils::ReleaseIoBinding() {
 	input_buffer_.clear();
 	input_shape_.clear();
 	io_binding_initialized_ = false;
+}
+
+std::vector<float> WinMLUtils::InferCpu(
+	const std::string& input_name,
+	const std::vector<float>& input_tensor_data,
+	const std::vector<int64_t>& input_shape
+)
+{
+	if (!session_) {
+		throw std::runtime_error("Model not loaded");
+	}
+
+	try {
+		// CPU/NPU環境ではCPUメモリに直接入力
+		auto memory_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+		Ort::Value input_tensor = Ort::Value::CreateTensor<float>(
+			memory_info,
+			const_cast<float*>(input_tensor_data.data()),
+			input_tensor_data.size(),
+			input_shape.data(),
+			input_shape.size());
+
+		// 入力名・出力名
+		std::vector<const char*> input_names_arr{ input_name.c_str() };
+		std::vector<const char*> output_names_arr{ const_cast<char*>(output_names_[0].c_str()) };
+
+		// 推論実行
+		auto inference_start = std::chrono::high_resolution_clock::now();
+		std::vector<Ort::Value> output_tensors = session_->Run(
+			Ort::RunOptions{ nullptr },
+			input_names_arr.data(), &input_tensor, 1,
+			output_names_arr.data(), 1);
+		auto inference_end = std::chrono::high_resolution_clock::now();
+		auto inference_ms = std::chrono::duration_cast<std::chrono::milliseconds>(inference_end - inference_start).count();
+
+		// 出力データを取得
+		auto tensor_info = output_tensors[0].GetTensorTypeAndShapeInfo();
+		size_t element_count = tensor_info.GetElementCount();
+		const float* output_data = output_tensors[0].GetTensorData<float>();
+		std::vector<float> result(output_data, output_data + element_count);
+
+		char dbg[256];
+		snprintf(dbg, sizeof(dbg), "[WinMLUtils] InferCpu completed in %lld ms (engine=%d)\n",
+			inference_ms, static_cast<int>(engine_type_));
+		OutputDebugStringA(dbg);
+		return result;
+	}
+	catch (const Ort::Exception& ex) {
+		char dbg[512];
+		snprintf(dbg, sizeof(dbg), "[WinMLUtils] InferCpu Ort::Exception: %s\n", ex.what());
+		OutputDebugStringA(dbg);
+		std::cerr << "InferCpu failed: " << ex.what() << std::endl;
+		throw;
+	}
 }
 
 } // namespace WoLNamesBlackedOut::Core

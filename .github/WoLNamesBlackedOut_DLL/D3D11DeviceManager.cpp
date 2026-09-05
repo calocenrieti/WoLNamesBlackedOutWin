@@ -173,7 +173,7 @@ bool D3D11DeviceManager::Initialize(D3D_DRIVER_TYPE device_type, IDXGIAdapter* a
 		ARRAYSIZE(featureLevels),
 		D3D11_SDK_VERSION,
 		&d3d11_device_,
-		nullptr,
+		&feature_level_,
 		&d3d11_context_
 	);
 
@@ -267,6 +267,13 @@ bool D3D11DeviceManager::Initialize(D3D_DRIVER_TYPE device_type, IDXGIAdapter* a
 
 void D3D11DeviceManager::Release() {
 	ReleaseVideoProcessor();
+
+	{
+		std::lock_guard<std::mutex> lock(staging_mutex_);
+		staging_read_texture_.Reset();
+		staging_read_width_ = 0;
+		staging_read_height_ = 0;
+	}
 
 	if (hw_device_ctx_) {
 		av_buffer_unref(&hw_device_ctx_);
@@ -774,3 +781,61 @@ bool D3D11DeviceManager::ConvertNV12ToBGRA(ID3D11Texture2D* nv12, ID3D11Texture2
 	VerboseVideoConvertLog("[ConvertNV12ToBGRA] VideoProcessorBlt OK\n");
 	return true;
 }
+
+bool D3D11DeviceManager::ReadTextureToCpuBgra(ID3D11Texture2D* src_texture, uint8_t* dst_bgra, uint32_t width, uint32_t height) {
+	if (!src_texture || !dst_bgra || width == 0 || height == 0 || !d3d11_device_ || !d3d11_context_) {
+		return false;
+	}
+
+	std::lock_guard<std::mutex> lock(staging_mutex_);
+
+	if (!staging_read_texture_ || staging_read_width_ != width || staging_read_height_ != height) {
+		staging_read_texture_.Reset();
+		D3D11_TEXTURE2D_DESC desc = {};
+		desc.Width = width;
+		desc.Height = height;
+		desc.MipLevels = 1;
+		desc.ArraySize = 1;
+		desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+		desc.SampleDesc.Count = 1;
+		desc.Usage = D3D11_USAGE_STAGING;
+		desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+
+		HRESULT hr = d3d11_device_->CreateTexture2D(&desc, nullptr, staging_read_texture_.ReleaseAndGetAddressOf());
+		if (FAILED(hr) || !staging_read_texture_) {
+			OutputDebugStringA("[ReadTextureToCpuBgra] Failed to create staging read texture\n");
+			return false;
+		}
+		staging_read_width_ = width;
+		staging_read_height_ = height;
+	}
+
+	d3d11_context_->CopyResource(staging_read_texture_.Get(), src_texture);
+
+	D3D11_MAPPED_SUBRESOURCE mapped = {};
+	HRESULT hr = d3d11_context_->Map(staging_read_texture_.Get(), 0, D3D11_MAP_READ, 0, &mapped);
+	if (FAILED(hr) || !mapped.pData) {
+		OutputDebugStringA("[ReadTextureToCpuBgra] Map failed\n");
+		return false;
+	}
+
+	const uint8_t* src_row = static_cast<const uint8_t*>(mapped.pData);
+	const size_t row_bytes = static_cast<size_t>(width) * 4;
+	for (uint32_t y = 0; y < height; ++y) {
+		memcpy(dst_bgra + static_cast<size_t>(y) * row_bytes, src_row + static_cast<size_t>(y) * mapped.RowPitch, row_bytes);
+	}
+
+	d3d11_context_->Unmap(staging_read_texture_.Get(), 0);
+	return true;
+}
+
+bool D3D11DeviceManager::WriteCpuBgraToTexture(const uint8_t* src_bgra, uint32_t width, uint32_t height, ID3D11Texture2D* dst_texture) {
+	if (!src_bgra || !dst_texture || width == 0 || height == 0 || !d3d11_context_) {
+		return false;
+	}
+
+	const UINT row_pitch = width * 4;
+	d3d11_context_->UpdateSubresource(dst_texture, 0, nullptr, src_bgra, row_pitch, 0);
+	return true;
+}
+

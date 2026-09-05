@@ -91,6 +91,16 @@ public:
 	std::string GetGpuName() const;
 
 	/**
+	 * @brief Direct3D 機能レベルの取得
+	 */
+	D3D_FEATURE_LEVEL GetFeatureLevel() const { return feature_level_; }
+
+	/**
+	 * @brief Compute Shader (Direct3D 11.0+) がサポートされているか判定
+	 */
+	bool IsComputeShaderSupported() const { return feature_level_ >= D3D_FEATURE_LEVEL_11_0; }
+
+	/**
 	 * @brief 利用可能なHWエンコーダーを自動判別
 	 * @return 最適なエンコーダー種別
 	 */
@@ -137,6 +147,26 @@ public:
 	 */
 	bool ConvertNV12ToBGRA(ID3D11Texture2D* nv12, ID3D11Texture2D* bgra, UINT nv12_array_slice = 0);
 
+	/**
+	 * @brief BGRAテクスチャをCPUメモリに読み出す（Readback）
+	 * @param src_texture 読み取り元BGRAテクスチャ
+	 * @param dst_bgra 出力先バッファ（width * height * 4 バイト以上）
+	 * @param width テクスチャ幅
+	 * @param height テクスチャ高さ
+	 * @return 成功時 true
+	 */
+	bool ReadTextureToCpuBgra(ID3D11Texture2D* src_texture, uint8_t* dst_bgra, uint32_t width, uint32_t height);
+
+	/**
+	 * @brief CPUメモリのBGRAデータをGPUテクスチャに書き込む（Upload）
+	 * @param src_bgra 入力BGRAデータ
+	 * @param width データ幅
+	 * @param height データ高さ
+	 * @param dst_texture 書き込み先BGRAテクスチャ
+	 * @return 成功時 true
+	 */
+	bool WriteCpuBgraToTexture(const uint8_t* src_bgra, uint32_t width, uint32_t height, ID3D11Texture2D* dst_texture);
+
 private:
 	bool InitializeDecodeVideoProcessor(int in_width, int in_height, int out_width = 0, int out_height = 0);
 	bool InitializeEncodeVideoProcessor(int in_width, int in_height, int out_width = 0, int out_height = 0);
@@ -151,8 +181,15 @@ private:
 	AVBufferRef* hw_device_ctx_;
 
 	bool multithread_protected_;
+	D3D_FEATURE_LEVEL feature_level_ = D3D_FEATURE_LEVEL_9_1;
 	WoLNamesBlackedOut::Core::GpuVendor gpu_vendor_;
 	std::string gpu_name_;
+
+	// Staging texture cache for CPU readback
+	Microsoft::WRL::ComPtr<ID3D11Texture2D> staging_read_texture_;
+	uint32_t staging_read_width_ = 0;
+	uint32_t staging_read_height_ = 0;
+	std::mutex staging_mutex_;
 
 	// D3D11 Video Processor for Decode thread (NV12 -> BGRA)
 	Microsoft::WRL::ComPtr<ID3D11VideoDevice> decode_video_device_;

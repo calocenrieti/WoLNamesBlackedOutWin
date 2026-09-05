@@ -27,6 +27,7 @@ extern "C" {
 
 #include "CoreTypes.h"
 #include "PreprocessShader.h"
+#include "HardwareAcceleratorChecker.h"
 
 namespace WoLNamesBlackedOut::Core {
 
@@ -168,6 +169,25 @@ public:
 	 */
 	void ReleaseIoBinding();
 
+	/**
+	 * @brief エンジンタイプを設定（GPU/NPU/CPU）
+	 * @param engine エンジンタイプ
+	 */
+	void SetEngineType(HardwareAcceleratorChecker::Engine engine) { engine_type_ = engine; }
+
+	/**
+	 * @brief CPU/NPU推論を実行（float配列入力）
+	 * @param input_name 入力名
+	 * @param input_tensor_data テンソルデータ（float配列、NCHW形式）
+	 * @param input_shape テンソル形状
+	 * @return 出力テンソルデータ（floatベクトル）
+	 */
+	std::vector<float> InferCpu(
+		const std::string& input_name,
+		const std::vector<float>& input_tensor_data,
+		const std::vector<int64_t>& input_shape
+	);
+
 private:
 	Microsoft::WRL::ComPtr<ID3D11Device> device_;
 	Microsoft::WRL::ComPtr<ID3D11DeviceContext> context_;
@@ -192,6 +212,9 @@ private:
 	// TensorRTエンジンキャッシュ設定
 	std::wstring trt_cache_path_;
 	bool trt_cache_enabled_ = false;
+
+	// エンジンタイプ（GPU/NPU/CPU）
+	HardwareAcceleratorChecker::Engine engine_type_ = HardwareAcceleratorChecker::Engine::GPU;
 
 	/**
 	 * @brief ID3D11Texture2DをIDXGISurfaceに変換

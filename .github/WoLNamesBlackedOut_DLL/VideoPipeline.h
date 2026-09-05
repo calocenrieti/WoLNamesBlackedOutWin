@@ -20,6 +20,11 @@ extern "C" {
 #include "CoreTypes.h"
 #include "ByteTrackInterop.h"
 #include "OcrRecognizer.h"
+#include "CpuPreprocessor.h"
+#include "CpuPostprocessor.h"
+
+#include <opencv2/core.hpp>
+#include <opencv2/imgcodecs.hpp>
 
 #include <thread>
 #include <queue>
@@ -250,6 +255,12 @@ private:
 	MaskShader mask_shader_;
 	uint32_t mosaic_size_;
 	uint32_t blur_radius_;
+
+	// CPU / OpenCV パイプライン
+	bool use_cpu_pipeline_ = false;
+	CpuPreprocessor cpu_preprocessor_;
+	CpuPostprocessor cpu_postprocessor_;
+	cv::Mat cached_watermark_bgra_;
 
 	// 透かしリソース
 	Microsoft::WRL::ComPtr<ID3D11Texture2D> copyright_texture_;

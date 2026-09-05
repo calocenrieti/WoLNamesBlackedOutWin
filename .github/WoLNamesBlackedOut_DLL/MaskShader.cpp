@@ -1240,8 +1240,8 @@ bool MaskShader::ApplyBlur(
     }
 
     // ブラー半径0ならsourceをそのまま返す
-    // パラメータ1でも効果が見えるようイテレーション数を+1スケーリング
-    uint32_t iterations = blur_radius + 1;
+    // 強すぎるボケを避けつつ、弱くなりすぎないようGPUブラーを中程度に調整
+    uint32_t iterations = blur_radius;
     MaskLogFmt("[ApplyBlur] blur_radius=%u iterations=%u texture=%ux%u\n",
         blur_radius, iterations, source_desc.Width, source_desc.Height);
     if (blur_radius == 0) {
@@ -1258,7 +1258,10 @@ bool MaskShader::ApplyBlur(
 
     for (uint32_t i = 0; i < iterations; ++i) {
         BlurConstantBuffer blur_const{};
-        float step = static_cast<float>(i + 1);
+        float step = static_cast<float>(i + 1) * 0.75f;
+        if (blur_radius <= 2) {
+            step += 0.35f;
+        }
         blur_const.offset = step;
         blur_const.pixel_size_x = step / source_desc.Width;
         blur_const.pixel_size_y = step / source_desc.Height;

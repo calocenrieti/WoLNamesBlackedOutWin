@@ -121,6 +121,8 @@ namespace WoLNamesBlackedOut
         private bool suppressBlackedOutToggleEvent = false;
         private bool suppressPreviewFrameSliderRefresh = false;
         private bool autoResizedForCurrentSource = false;
+        private bool lastKnownCpuFallbackDetected = false;
+        private bool isInitializingUiState = true;
 
         private bool excludeByNameEnabled = false;
         private int ocrExpandPixels = 2;
@@ -137,6 +139,7 @@ namespace WoLNamesBlackedOut
         private CropDragEdge cropDragEdge = CropDragEdge.None;
         private bool suppressCropNumberBoxValueChanged = false;
         private const string UiLanguagePreferenceKey = "LanguageJP";
+        private const string ForceCpuPipelinePreferenceKey = "ForceCpuPipeline";
 
         private enum CropDragEdge
         {
@@ -598,6 +601,11 @@ namespace WoLNamesBlackedOut
         private double previewPanStartY = 0.0;
         private double previewPanOriginX = 0.0;
         private double previewPanOriginY = 0.0;
+        private long previewLastLeftClickTimestampMs = 0;
+        private double previewLastLeftClickX = double.NaN;
+        private double previewLastLeftClickY = double.NaN;
+        private const long PreviewDoubleClickThresholdMs = 350;
+        private const double PreviewDoubleClickThresholdPixels = 8.0;
         private ScaleTransform? previewScaleTransform;
         private TranslateTransform? previewTranslateTransform;
         private RectangleGeometry? previewViewportClipGeometry;
@@ -713,7 +721,8 @@ namespace WoLNamesBlackedOut
                     copyrightImagePath ?? string.Empty,
                     copyrightOffsetX,
                     copyrightOffsetY,
-                    (float)copyrightZoomScale);
+                    (float)copyrightZoomScale,
+                    ShouldBoostBlurForCpuPipeline());
 
                 if (result.Result != 0 || isWindowClosing)
                 {
@@ -866,6 +875,8 @@ namespace WoLNamesBlackedOut
             {
                 FFMpeg_text.Text = latestStatus;
             }
+
+            RefreshCpuPipelineDependentUi();
         }
 
         private void BeginPreviewStatusFeedback(string initialMessage)
@@ -891,6 +902,8 @@ namespace WoLNamesBlackedOut
             {
                 FFMpeg_text.Text = fallbackMessage;
             }
+
+            RefreshCpuPipelineDependentUi();
         }
 
         // C++ の構造体に対応する C# の構造体を定義
@@ -1014,8 +1027,8 @@ namespace WoLNamesBlackedOut
             Environment.SetEnvironmentVariable("WOL_USE_IOBINDING", ioValue, EnvironmentVariableTarget.Process);
 
             // Keep user-level values aligned so native code can read stable toggles even across process boundaries.
-            Environment.SetEnvironmentVariable("WOL_USE_GPU_PREPROCESS", gpuValue, EnvironmentVariableTarget.User);
-            Environment.SetEnvironmentVariable("WOL_USE_IOBINDING", ioValue, EnvironmentVariableTarget.User);
+            Environment.SetEnvironmentVariable("WOL_USE_GPU_PREPROCESS", null, EnvironmentVariableTarget.User);
+            Environment.SetEnvironmentVariable("WOL_USE_IOBINDING", null, EnvironmentVariableTarget.User);
 
             string modeLabel = profile switch
             {
@@ -1070,6 +1083,28 @@ namespace WoLNamesBlackedOut
             return value == "1" || value.Equals("true", StringComparison.OrdinalIgnoreCase);
         }
 
+        private ToggleMenuFlyoutItem? TryGetForceCpuPipelineMenuItem()
+        {
+            try
+            {
+                if (MoreAppBarButton?.Flyout is MenuFlyout menu)
+                {
+                    foreach (var it in menu.Items)
+                    {
+                        if (it is ToggleMenuFlyoutItem t && t.Name == "ForceCpuPipeline")
+                        {
+                            return t;
+                        }
+                    }
+                }
+            }
+            catch
+            {
+            }
+
+            return null;
+        }
+
         private static string GetOrCreateDebugLogPath()
         {
             lock (debugLogFilePathLock)
@@ -1109,6 +1144,47 @@ namespace WoLNamesBlackedOut
             AppendDebugLog($"DebugLogExport={(enabled ? "true" : "false")}");
         }
 
+        private static bool IsForceCpuPipelineEnabledFromEnv()
+        {
+            string? value = Environment.GetEnvironmentVariable("WOL_FORCE_CPU_PIPELINE", EnvironmentVariableTarget.Process);
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return false;
+            }
+
+            value = value.Trim();
+            return value == "1" || value.Equals("true", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private void ForceCpuPipeline_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                bool enabled = sender is ToggleMenuFlyoutItem toggle && toggle.IsChecked;
+                bool current = IsForceCpuPipelineEnabledFromEnv();
+                if (enabled == current)
+                {
+                    enabled = !enabled;
+                }
+
+                Environment.SetEnvironmentVariable("WOL_FORCE_CPU_PIPELINE", enabled ? "1" : "0", EnvironmentVariableTarget.Process);
+                AppendDebugLog($"ForceCpuPipeline={(enabled ? "true" : "false")}");
+
+                ApplyBlackedOutMaskControlVisibility(GetComboText(BlackedOut_ComboBox, "Solid"));
+                _ = RefreshMaskSettingPreviewAsync();
+
+                var localSettings = TryGetLocalSettings();
+                if (localSettings != null)
+                {
+                    try { localSettings.Values[ForceCpuPipelinePreferenceKey] = enabled; } catch { }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"ForceCpuPipeline_Click failed: {ex.Message}");
+            }
+        }
+
         private void LanguageJP_Click(object sender, RoutedEventArgs e)
         {
             bool useJapanese = LanguageJP?.IsChecked == true;
@@ -1140,6 +1216,11 @@ namespace WoLNamesBlackedOut
             StartupTrace("ctor:start");
             this.InitializeComponent();
             StartupTrace("ctor:after init");
+
+            DrawingCanvas.AddHandler(
+                UIElement.DoubleTappedEvent,
+                new DoubleTappedEventHandler(DrawingCanvas_DoubleTapped),
+                true);
 
             TryEnableMicaBackdrop();
 
@@ -1203,6 +1284,18 @@ namespace WoLNamesBlackedOut
             // LocalSettings から値を読み込む
             var localSettings = TryGetLocalSettings();
 
+            // Program.cs で先に設定済みの process 環境変数を既定値として引き継ぐ
+            bool forceCpuPipelineEnabled = IsForceCpuPipelineEnabledFromEnv();
+            if (localSettings != null && localSettings.Values.TryGetValue(ForceCpuPipelinePreferenceKey, out object forceCpuPipelineValue))
+            {
+                if (bool.TryParse(forceCpuPipelineValue?.ToString(), out bool parsedForceCpuPipelineEnabled))
+                {
+                    forceCpuPipelineEnabled = parsedForceCpuPipelineEnabled;
+                }
+            }
+            Environment.SetEnvironmentVariable("WOL_FORCE_CPU_PIPELINE", forceCpuPipelineEnabled ? "1" : "0", EnvironmentVariableTarget.Process);
+            StartupTrace($"ctor:force_cpu_pipeline={(forceCpuPipelineEnabled ? "true" : "false")}");
+
             bool useJapaneseUi = IsJapaneseUiCulture();
             if (localSettings != null && localSettings.Values.TryGetValue(UiLanguagePreferenceKey, out object languagePreferenceValue))
             {
@@ -1261,9 +1354,9 @@ namespace WoLNamesBlackedOut
             // YoloThresholdSlider の値を読み込み、反映
             if (localSettings != null && localSettings.Values.TryGetValue("YoloThresholdSlider", out object yoloThresholdValue))
             {
-                if (double.TryParse(yoloThresholdValue.ToString(), out double sliderValue))
+                if (TryParseSettingDouble(yoloThresholdValue, out double sliderValue))
                 {
-                    YoloThresholdSlider.Value = sliderValue;
+                    YoloThresholdSlider.Value = Math.Clamp(sliderValue, YoloThresholdSlider.Minimum, YoloThresholdSlider.Maximum);
                 }
             }
 
@@ -1326,6 +1419,17 @@ namespace WoLNamesBlackedOut
             DebugLogExport.IsChecked = debugLogExportEnabled;
             Environment.SetEnvironmentVariable("WOL_DEBUG_LOG_EXPORT", debugLogExportEnabled ? "1" : "0", EnvironmentVariableTarget.Process);
             DebugLogExport.Click += DebugLogExport_Click;
+
+            // CPUライン強制トグルを復元（Flyout要素に確実に反映）
+            try
+            {
+                var forceCpuToggle = TryGetForceCpuPipelineMenuItem();
+                if (forceCpuToggle != null)
+                {
+                    forceCpuToggle.IsChecked = forceCpuPipelineEnabled;
+                }
+            }
+            catch { }
 
             // 最適化プロファイルは常にStep3（UIは非表示）
             OptimizationModeComboBox.SelectedIndex = 3;
@@ -1442,7 +1546,33 @@ namespace WoLNamesBlackedOut
             }
             SetPreviewButtonVisual(false);
             SetBlackedOutButtonVisual(false);
+            isInitializingUiState = false;
             StartupTrace("ctor:end");
+        }
+
+        private static bool TryParseSettingDouble(object? value, out double result)
+        {
+            result = 0;
+            if (value == null)
+            {
+                return false;
+            }
+
+            if (value is double d)
+            {
+                result = d;
+                return true;
+            }
+
+            if (value is float f)
+            {
+                result = f;
+                return true;
+            }
+
+            string text = value.ToString() ?? string.Empty;
+            return double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out result)
+                || double.TryParse(text, NumberStyles.Float, CultureInfo.CurrentCulture, out result);
         }
 
         private void InitializePreviewCanvasTransform()
@@ -1657,6 +1787,47 @@ namespace WoLNamesBlackedOut
             ApplyPreviewCanvasTransform();
         }
 
+        private bool TryHandlePreviewDoubleClick(PointerRoutedEventArgs e, bool isCtrlPressed, bool isMiddleButtonPressed, bool isLeftButtonPressed, bool isRightButtonPressed)
+        {
+            if (isCtrlPressed || isMiddleButtonPressed || isRightButtonPressed || !isLeftButtonPressed)
+            {
+                return false;
+            }
+
+            long now = Environment.TickCount64;
+            var point = e.GetCurrentPoint(DrawingCanvas).Position;
+
+            bool withinTime = previewLastLeftClickTimestampMs > 0 && (now - previewLastLeftClickTimestampMs) <= PreviewDoubleClickThresholdMs;
+            bool withinDistance = false;
+            if (!double.IsNaN(previewLastLeftClickX) && !double.IsNaN(previewLastLeftClickY))
+            {
+                double dx = point.X - previewLastLeftClickX;
+                double dy = point.Y - previewLastLeftClickY;
+                withinDistance = (dx * dx) + (dy * dy) <= PreviewDoubleClickThresholdPixels * PreviewDoubleClickThresholdPixels;
+            }
+
+            previewLastLeftClickTimestampMs = now;
+            previewLastLeftClickX = point.X;
+            previewLastLeftClickY = point.Y;
+
+            if (!withinTime || !withinDistance)
+            {
+                return false;
+            }
+
+            if (isDrawing && currentRectangle != null)
+            {
+                DrawingCanvas.Children.Remove(currentRectangle);
+                currentRectangle = null;
+                isDrawing = false;
+            }
+
+            ReleasePreviewPointerCapturesSafe();
+            ResetPreviewViewportTransform();
+            e.Handled = true;
+            return true;
+        }
+
         private Windows.Foundation.Point GetPreviewContainerPoint(PointerRoutedEventArgs e)
         {
             return e.GetCurrentPoint(PreviewContainer).Position;
@@ -1849,6 +2020,77 @@ namespace WoLNamesBlackedOut
             return value == "Mosaic" || value == "Blur" || value == "Inpaint";
         }
 
+        private bool IsInpaintSliderSupportedOnCurrentPipeline()
+        {
+            return !(IsForceCpuPipelineEnabledFromEnv() || FrameProcessor.IsCpuPipelineFallbackDetected);
+        }
+
+        private bool ShouldBoostBlurForCpuPipeline()
+        {
+            return IsForceCpuPipelineEnabledFromEnv() || FrameProcessor.IsCpuPipelineFallbackDetected;
+        }
+
+        private void RefreshCpuPipelineDependentUi()
+        {
+            bool fallbackDetected = FrameProcessor.IsCpuPipelineFallbackDetected;
+            if (fallbackDetected == lastKnownCpuFallbackDetected)
+            {
+                return;
+            }
+
+            lastKnownCpuFallbackDetected = fallbackDetected;
+            ApplyBlackedOutMaskControlVisibility(GetComboText(BlackedOut_ComboBox, "Solid"));
+        }
+
+        private bool ShouldShowBlackedOutSlider(string maskType)
+        {
+            if (!IsSliderMaskType(maskType))
+            {
+                return false;
+            }
+
+            return maskType != "Inpaint" || IsInpaintSliderSupportedOnCurrentPipeline();
+        }
+
+        private void ApplyBlackedOutMaskControlVisibility(string value)
+        {
+            if (BlackedOut_color == null || BlackedOutSlideBar == null)
+            {
+                return;
+            }
+
+            if (value == "Solid")
+            {
+                BlackedOut_color.Visibility = Visibility.Visible;
+                BlackedOutSlideBar.Visibility = Visibility.Collapsed;
+            }
+            else if (ShouldShowBlackedOutSlider(value))
+            {
+                BlackedOut_color.Visibility = Visibility.Collapsed;
+                BlackedOutSlideBar.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                BlackedOut_color.Visibility = Visibility.Collapsed;
+                BlackedOutSlideBar.Visibility = Visibility.Collapsed;
+            }
+        }
+
+        private Task RefreshMaskSettingPreviewAsync()
+        {
+            if (previewSessionOpen)
+            {
+                return RefreshCurrentPreviewFrameIfPausedAsync();
+            }
+
+            if (IsCurrentSourceImageFile())
+            {
+                return RefreshCurrentImagePreviewAsync();
+            }
+
+            return Task.CompletedTask;
+        }
+
         private static string? TryGetMaskTypeFromSelectionItem(object item)
         {
             if (item is ComboBoxItem comboBoxItem)
@@ -2024,6 +2266,14 @@ namespace WoLNamesBlackedOut
                 try { localSettings.Values["TextSimilarityPercent"] = textSimilarityPercent; } catch { }
                 try { localSettings.Values["MaskExcludeTextCsv"] = maskExcludeTextCsv ?? string.Empty; } catch { }
                 try { localSettings.Values[UiLanguagePreferenceKey] = LanguageJP?.IsChecked == true; } catch { }
+                try
+                {
+                    string? envValue = Environment.GetEnvironmentVariable("WOL_FORCE_CPU_PIPELINE", EnvironmentVariableTarget.Process);
+                    bool forceCpuEnabled = !string.IsNullOrWhiteSpace(envValue)
+                        && (envValue.Trim() == "1" || envValue.Trim().Equals("true", StringComparison.OrdinalIgnoreCase));
+                    localSettings.Values[ForceCpuPipelinePreferenceKey] = forceCpuEnabled;
+                }
+                catch { }
             }
 
             // tempDirectory 内の "tmp_wol_*.*" にマッチするファイル一覧を取得する
@@ -2097,6 +2347,8 @@ namespace WoLNamesBlackedOut
             {
                 FFMpeg_text.Text = latestStatus;
             }
+
+            RefreshCpuPipelineDependentUi();
             int frame_count = SafeGetTotalFrameCount();
             if (frame_count > 0)
             {
@@ -2345,7 +2597,7 @@ namespace WoLNamesBlackedOut
                         v_file_path, rectInfos, rectInfos.Length, nameColor, fixedColor,
                         Add_Copyright.IsChecked == true, GetComboText(BlackedOut_ComboBox, "Solid"), GetComboText(FixedFrame_ComboBox, "Solid"),
                         (int)BlackedOutSlideBar.Value, (int)FixedFrameSlideBar.Value, GetYoloThreshold(), resolvedCopyrightPath,
-                        copyrightOffsetX, copyrightOffsetY, (float)copyrightZoomScale);
+                        copyrightOffsetX, copyrightOffsetY, (float)copyrightZoomScale, ShouldBoostBlurForCpuPipeline());
 
                     last_preview_image = string.Empty;
                     previewSucceeded = UpdateImagePreview(result);
@@ -2502,7 +2754,8 @@ namespace WoLNamesBlackedOut
                     ocrExpandPixels,
                     ocrMaxRoisPerFrame,
                     GetTextSimilarityThreshold(),
-                    maskExcludeTextCsv));
+                    maskExcludeTextCsv,
+                    ShouldBoostBlurForCpuPipeline()));
 
                 if (isWindowClosing || !previewSessionOpen)
                 {
@@ -2634,7 +2887,7 @@ namespace WoLNamesBlackedOut
                 }
                 else
                 {
-                    _ = RefreshCurrentPreviewFrameIfPausedAsync();
+            _ = RefreshMaskSettingPreviewAsync();
                 }
                 return;
             }
@@ -2944,6 +3197,47 @@ namespace WoLNamesBlackedOut
                 };
             }
 
+            private static int _cpuFallbackDetected;
+
+            public static bool IsCpuPipelineFallbackDetected => Volatile.Read(ref _cpuFallbackDetected) == 1;
+
+            private static bool HasCpuFallbackSignal(string message)
+            {
+                if (string.IsNullOrWhiteSpace(message))
+                {
+                    return false;
+                }
+
+                string normalized = message.ToLowerInvariant();
+                return normalized.Contains("cpu")
+                    && (normalized.Contains("fallback")
+                        || normalized.Contains("fall back")
+                        || normalized.Contains("sw path")
+                        || normalized.Contains("software path")
+                        || normalized.Contains("software pipeline"));
+            }
+
+            private static int NormalizeMaskParamForNative(int maskType, int param)
+            {
+                return Math.Max(1, param);
+            }
+
+            private static int NormalizeMaskParamForNative(int maskType, int param, bool boostBlurForCpuPipeline)
+            {
+                int normalized = NormalizeMaskParamForNative(maskType, param);
+                if (maskType == MaskTypeToNative(MaskTypeKind.Blur))
+                {
+                    if (boostBlurForCpuPipeline)
+                    {
+                        return Math.Clamp((int)Math.Round(normalized * 2.0), 1, 16);
+                    }
+
+                    return Math.Clamp(normalized, 1, 16);
+                }
+
+                return normalized;
+            }
+
             private static string ResolveModelPath()
             {
                 return System.IO.Path.Combine(AppContext.BaseDirectory, "my_yolov8m_s.onnx");
@@ -3049,15 +3343,18 @@ namespace WoLNamesBlackedOut
                 int ocrExpandPixels = 2,
                 int ocrMaxRoisPerFrame = 6,
                 float textSimilarityThreshold = 0.85f,
-                string maskExcludeTextCsv = "")
+                string maskExcludeTextCsv = "",
+                bool boostBlurForCpuPipeline = false)
             {
                 return Task.Run(() =>
                 {
                     PrepareStatusTracking();
                     Interlocked.Exchange(ref _latestProcessedFrames, 0);
+                    int normalizedBlackedOutParam = NormalizeMaskParamForNative(blackedOut, blackedout_param, boostBlurForCpuPipeline);
+                    int normalizedFixedFrameParam = NormalizeMaskParamForNative(fixedFrame, fixedFrame_param, boostBlurForCpuPipeline);
                     return ProcessVideo(inputVideoPath, outputVideoPath, codec, hwaccel, width, height, fps, trimStartSeconds, trimEndSeconds, confThreshold,
                         colorPrimaries, rects, count, nameColor, fixframeColor, copyright,
-                        blackedOut, fixedFrame, blackedout_param, fixedFrame_param,
+                        blackedOut, fixedFrame, normalizedBlackedOutParam, normalizedFixedFrameParam,
                         copyrightOffsetX, copyrightOffsetY, copyrightScale, copyrightImagePath ?? string.Empty,
                         excludeByNameEnabled,
                         ocrExpandPixels,
@@ -3087,8 +3384,9 @@ namespace WoLNamesBlackedOut
                  bool excludeByNameEnabled = false,
                  int ocrExpandPixels = 2,
                  int ocrMaxRoisPerFrame = 6,
-                 float textSimilarityThreshold = 0.85f,
-                 string maskExcludeTextCsv = "")
+                  float textSimilarityThreshold = 0.85f,
+                  string maskExcludeTextCsv = "",
+                  bool boostBlurForCpuPipeline = false)
             {
                 return RunDmlMainAsync(inputVideoPath, outputVideoPath, codec, hwaccel, width, height, fps, trimStartSeconds, trimEndSeconds, confThreshold,
                     colorPrimaries, rects, count, nameColor, fixframeColor, copyright,
@@ -3103,7 +3401,8 @@ namespace WoLNamesBlackedOut
                     ocrExpandPixels,
                     ocrMaxRoisPerFrame,
                     textSimilarityThreshold,
-                    maskExcludeTextCsv);
+                    maskExcludeTextCsv,
+                    boostBlurForCpuPipeline);
             }
             public sealed class PreviewFrameResult
             {
@@ -3125,7 +3424,8 @@ namespace WoLNamesBlackedOut
                 string copyrightImagePath,
                 int copyrightOffsetX = 0,
                 int copyrightOffsetY = 0,
-                float copyrightScale = 1.0f)
+                float copyrightScale = 1.0f,
+                bool boostBlurForCpuPipeline = false)
             {
                 return Task.Run(() =>
                 {
@@ -3163,10 +3463,8 @@ namespace WoLNamesBlackedOut
                         {
                             blacked_type = MaskTypeToNative(GetMaskTypeKind(blackedOut)),
                             name_color = nameColor,
-                            blackedout_param = blackedout_param,
                             fixmask_type = MaskTypeToNative(GetMaskTypeKind(fixedFrame)),
                             fixframe_color = fixframeColor,
-                            fixedFrame_param = fixedFrame_param,
                             fixed_rect_count = rectCount,
                             fixed_rects = nativeRects,
                             enable_copyright = copyright,
@@ -3180,6 +3478,8 @@ namespace WoLNamesBlackedOut
                             mask_exclude_text_csv = string.Empty,
                             reserved = new int[4],
                         };
+                        maskParams.blackedout_param = NormalizeMaskParamForNative(maskParams.blacked_type, blackedout_param, boostBlurForCpuPipeline);
+                        maskParams.fixedFrame_param = NormalizeMaskParamForNative(maskParams.fixmask_type, fixedFrame_param, boostBlurForCpuPipeline);
 
                         phaseStopwatch.Restart();
                         int updateResult = PreviewUpdateParams(ref maskParams);
@@ -3262,7 +3562,8 @@ namespace WoLNamesBlackedOut
                 int ocrExpandPixels = 2,
                 int ocrMaxRoisPerFrame = 6,
                 float textSimilarityThreshold = 0.85f,
-                string maskExcludeTextCsv = "")
+                string maskExcludeTextCsv = "",
+                bool boostBlurForCpuPipeline = false)
             {
                 var nativeRects = new RectInfo[64];
                 var rectCount = Math.Min(count, nativeRects.Length);
@@ -3272,10 +3573,8 @@ namespace WoLNamesBlackedOut
                 {
                     blacked_type = MaskTypeToNative(GetMaskTypeKind(blackedOut)),
                     name_color = nameColor,
-                    blackedout_param = blackedout_param,
                     fixmask_type = MaskTypeToNative(GetMaskTypeKind(fixedFrame)),
                     fixframe_color = fixframeColor,
-                    fixedFrame_param = fixedFrame_param,
                     fixed_rect_count = rectCount,
                     fixed_rects = nativeRects,
                     enable_copyright = copyright,
@@ -3289,6 +3588,8 @@ namespace WoLNamesBlackedOut
                     mask_exclude_text_csv = maskExcludeTextCsv ?? string.Empty,
                     reserved = new int[4],
                 };
+                maskParams.blackedout_param = NormalizeMaskParamForNative(maskParams.blacked_type, blackedout_param, boostBlurForCpuPipeline);
+                maskParams.fixedFrame_param = NormalizeMaskParamForNative(maskParams.fixmask_type, fixedFrame_param, boostBlurForCpuPipeline);
 
                 return PreviewUpdateParams(ref maskParams);
             }
@@ -3592,7 +3893,8 @@ namespace WoLNamesBlackedOut
                     ocrExpandPixels,
                     ocrMaxRoisPerFrame,
                     GetTextSimilarityThreshold(),
-                    maskExcludeTextCsv));
+                    maskExcludeTextCsv,
+                    ShouldBoostBlurForCpuPipeline()));
 
                 if (isWindowClosing || !previewSessionOpen)
                 {
@@ -3713,10 +4015,10 @@ namespace WoLNamesBlackedOut
 
                     if (sourceIsVideo)
                     {
-                        saved = await TrySaveCurrentVideoPreviewFrameAsync(file);
+                        saved = await TrySaveLastPreviewFrameAsync(file, applyCrop: true);
                         if (!saved)
                         {
-                            saved = await TrySaveLastPreviewFrameAsync(file);
+                            saved = await TrySaveCurrentVideoPreviewFrameAsync(file);
                         }
                     }
                     else
@@ -3780,7 +4082,7 @@ namespace WoLNamesBlackedOut
             }
         }
 
-        private async Task<bool> TrySaveLastPreviewFrameAsync(StorageFile file)
+        private async Task<bool> TrySaveLastPreviewFrameAsync(StorageFile file, bool applyCrop = false)
         {
             byte[]? bgra = null;
             int width = 0;
@@ -3800,6 +4102,13 @@ namespace WoLNamesBlackedOut
             if (bgra == null)
             {
                 return false;
+            }
+
+            if (applyCrop && CropEnabledCheckBox != null && CropEnabledCheckBox.IsChecked == true)
+            {
+                byte[] cropped = CropBgraBuffer_Helper(bgra, width, height, cropTop, cropLeft, cropRight, cropBottom, out int outW, out int outH);
+                await SaveBgraToFileAsync(file, cropped, outW, outH);
+                return true;
             }
 
             await SaveBgraToFileAsync(file, bgra, width, height);
@@ -3863,7 +4172,8 @@ namespace WoLNamesBlackedOut
                 ocrExpandPixels,
                 ocrMaxRoisPerFrame,
                 GetTextSimilarityThreshold(),
-                maskExcludeTextCsv));
+                maskExcludeTextCsv,
+                ShouldBoostBlurForCpuPipeline()));
 
             if (updateResult != 0)
             {
@@ -3941,7 +4251,8 @@ namespace WoLNamesBlackedOut
                 copyrightImagePath ?? string.Empty,
                 copyrightOffsetX,
                 copyrightOffsetY,
-                (float)copyrightZoomScale);
+                    (float)copyrightZoomScale,
+                    ShouldBoostBlurForCpuPipeline());
 
             if (result.Result != 0)
             {
@@ -4256,6 +4567,15 @@ namespace WoLNamesBlackedOut
 
         private async void YoloThresholdSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
         {
+            if (!isInitializingUiState)
+            {
+                var localSettings = TryGetLocalSettings();
+                if (localSettings != null)
+                {
+                    try { localSettings.Values["YoloThresholdSlider"] = YoloThresholdSlider?.Value ?? 0.0; } catch { }
+                }
+            }
+
             if (previewThresholdUpdateBusy || !previewSessionOpen || running_state || string.IsNullOrWhiteSpace(v_file_path))
             {
                 return;
@@ -4373,11 +4693,12 @@ namespace WoLNamesBlackedOut
                             new HyperlinkButton { Content = "FFmpeg 9.01", NavigateUri = new Uri("http://www.gnu.org/licenses/old-licenses/lgpl-2.1.html"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "ByteTrack-cpp", NavigateUri = new Uri("https://github.com/derpda/ByteTrack-cpp/blob/main/LICENSE"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "Eigen 5.0.0", NavigateUri = new Uri("https://gitlab.com/libeigen/eigen/-/blob/master/COPYING.APACHE"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "Microsoft.Windows.AI.MachineLearning 2.2.12", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.Windows.AI.MachineLearning/2.2.12/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "Microsoft.Windows.CppWinRT 3.0.260715.1", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.Windows.CppWinRT/3.0.260715.1/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "OpenCV 4.13", NavigateUri = new Uri("https://github.com/opencv/opencv/blob/5.x/LICENSE"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.Windows.AI.MachineLearning 2.3.42", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.Windows.AI.MachineLearning/2.3.42/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.Windows.CppWinRT 3.0.260818.1", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.Windows.CppWinRT/3.0.260818.1/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             //c#
                             new HyperlinkButton { Content = "Microsoft.WindowsAppSDK 2.4.0", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK/2.4.0/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "Microsoft.Windows.SDK.BuildTools 10.0.28000.2526", NavigateUri = new Uri("https://aka.ms/WinSDKLicenseURL"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.Windows.SDK.BuildTools 10.0.28000.2705", NavigateUri = new Uri("https://aka.ms/WinSDKLicenseURL"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "Microsoft.Windows.SDK.BuildTools.MSIX 1.7.251221100", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsSDK.BuildTools.MSIX/1.7.251221100/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "Microsoft.Windows.AI.MachineLearning 2.1.74", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.Windows.AI.MachineLearning/2.1.74/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.AI 2.4.4", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.AI/2.4.4/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
@@ -4390,7 +4711,7 @@ namespace WoLNamesBlackedOut
                             new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.Search 2.4.4", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.Search/2.4.4/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.Widgets 2.0.5", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.Widgets/2.0.5/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.WinUI 2.3.6", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.WinUI/2.3.6/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "Microsoft.Web.WebView2 1.0.4129.50", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.Web.WebView2/1.0.4129.50/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.Web.WebView2 1.0.4191.47", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.Web.WebView2/1.0.4191.47/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "System.Numerics.Tensors 9.0.0", NavigateUri = new Uri("https://licenses.nuget.org/MIT"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             //model
                             new HyperlinkButton { Content = "PaddleOCR (model)", NavigateUri = new Uri("https://github.com/PaddlePaddle/PaddleOCR?tab=Apache-2.0-1-ov-file"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
@@ -4500,7 +4821,7 @@ namespace WoLNamesBlackedOut
             FrameProcessor.PreviewFrameResult? previewFrame = null;
             try
             {
-                previewFrame = await FrameProcessor.Runpreview_apiAsync(v_file_path, rectInfos, rectInfos.Length, BlackedOut_color_icon_color_info, FixedFrame_color_icon_color_Info, Add_Copyright.IsChecked.Value, GetComboText(BlackedOut_ComboBox, "Solid"), GetComboText(FixedFrame_ComboBox, "Solid"), (int)BlackedOutSlideBar.Value, (int)FixedFrameSlideBar.Value, GetYoloThreshold(), copyrightImagePath ?? string.Empty, copyrightOffsetX, copyrightOffsetY, (float)copyrightZoomScale);
+                previewFrame = await FrameProcessor.Runpreview_apiAsync(v_file_path, rectInfos, rectInfos.Length, BlackedOut_color_icon_color_info, FixedFrame_color_icon_color_Info, Add_Copyright.IsChecked.Value, GetComboText(BlackedOut_ComboBox, "Solid"), GetComboText(FixedFrame_ComboBox, "Solid"), (int)BlackedOutSlideBar.Value, (int)FixedFrameSlideBar.Value, GetYoloThreshold(), copyrightImagePath ?? string.Empty, copyrightOffsetX, copyrightOffsetY, (float)copyrightZoomScale, ShouldBoostBlurForCpuPipeline());
                 previewApiSucceeded = previewFrame.Result == 0;
             }
             finally
@@ -4747,7 +5068,7 @@ namespace WoLNamesBlackedOut
                 int processResult;
 
                 {
-                    processResult = await FrameProcessor.RunDmlMainAsync(video_temp_filename_1, video_temp_filename_2, effectiveCodec, hwaccel, v_width, v_height, v_fps, start_time, end_time, GetYoloThreshold(), v_color_primaries, rectInfos, rectInfos.Length, BlackedOut_color_icon_color_info, FixedFrame_color_icon_color_Info, Add_Copyright.IsChecked.Value, FrameProcessor.MaskTypeToNative(FrameProcessor.GetMaskTypeKind(GetComboText(BlackedOut_ComboBox, "Solid"))), FrameProcessor.MaskTypeToNative(FrameProcessor.GetMaskTypeKind(GetComboText(FixedFrame_ComboBox, "Solid"))), (int)BlackedOutSlideBar.Value, (int)FixedFrameSlideBar.Value, copyrightOffsetX, copyrightOffsetY, (float)copyrightZoomScale, copyrightImagePath ?? string.Empty, v_bitrate, preset, disableAudio, CropEnabledCheckBox?.IsChecked == true ? cropTop : 0, CropEnabledCheckBox?.IsChecked == true ? cropLeft : 0, CropEnabledCheckBox?.IsChecked == true ? cropRight : 0, CropEnabledCheckBox?.IsChecked == true ? cropBottom : 0, excludeByNameEnabled, ocrExpandPixels, ocrMaxRoisPerFrame, GetTextSimilarityThreshold(), maskExcludeTextCsv);
+                    processResult = await FrameProcessor.RunDmlMainAsync(video_temp_filename_1, video_temp_filename_2, effectiveCodec, hwaccel, v_width, v_height, v_fps, start_time, end_time, GetYoloThreshold(), v_color_primaries, rectInfos, rectInfos.Length, BlackedOut_color_icon_color_info, FixedFrame_color_icon_color_Info, Add_Copyright.IsChecked.Value, FrameProcessor.MaskTypeToNative(FrameProcessor.GetMaskTypeKind(GetComboText(BlackedOut_ComboBox, "Solid"))), FrameProcessor.MaskTypeToNative(FrameProcessor.GetMaskTypeKind(GetComboText(FixedFrame_ComboBox, "Solid"))), (int)BlackedOutSlideBar.Value, (int)FixedFrameSlideBar.Value, copyrightOffsetX, copyrightOffsetY, (float)copyrightZoomScale, copyrightImagePath ?? string.Empty, v_bitrate, preset, disableAudio, CropEnabledCheckBox?.IsChecked == true ? cropTop : 0, CropEnabledCheckBox?.IsChecked == true ? cropLeft : 0, CropEnabledCheckBox?.IsChecked == true ? cropRight : 0, CropEnabledCheckBox?.IsChecked == true ? cropBottom : 0, excludeByNameEnabled, ocrExpandPixels, ocrMaxRoisPerFrame, GetTextSimilarityThreshold(), maskExcludeTextCsv, ShouldBoostBlurForCpuPipeline());
                 }
 
                 stopwatch.Stop();
@@ -5005,6 +5326,14 @@ namespace WoLNamesBlackedOut
 
             var pointerPoint = e.GetCurrentPoint(DrawingCanvas);
             bool isMiddleButtonPressed = pointerPoint.Properties.IsMiddleButtonPressed;
+            bool isRightButtonPressed = pointerPoint.Properties.IsRightButtonPressed;
+            bool isLeftButtonPressed = pointerPoint.Properties.IsLeftButtonPressed;
+            bool isCtrlPressed = (e.KeyModifiers & Windows.System.VirtualKeyModifiers.Control) != 0;
+
+            if (TryHandlePreviewDoubleClick(e, isCtrlPressed, isMiddleButtonPressed, isLeftButtonPressed, isRightButtonPressed))
+            {
+                return;
+            }
 
             if (running_state && !isMiddleButtonPressed)
             {
@@ -5036,8 +5365,7 @@ namespace WoLNamesBlackedOut
             }
 
             // Check if Ctrl+Left-Click for copyright dragging
-            bool isCtrlPressed = (e.KeyModifiers & Windows.System.VirtualKeyModifiers.Control) != 0;
-            bool isLeftButton = e.GetCurrentPoint(DrawingCanvas).Properties.IsLeftButtonPressed;
+            bool isLeftButton = isLeftButtonPressed;
 
             if (!isCtrlPressed && isLeftButton && TryBeginCropBoundaryDrag(GetPreviewCanvasPoint(e)))
             {
@@ -5089,7 +5417,7 @@ namespace WoLNamesBlackedOut
                 return;
             }
 
-            if (e.GetCurrentPoint(DrawingCanvas).Properties.IsRightButtonPressed)
+            if (isRightButtonPressed)
             {
                 // 右クリックで矩形座標をリセット
                 savedRects.Clear();
@@ -5356,6 +5684,23 @@ namespace WoLNamesBlackedOut
             {
                 SetDrawingCanvasCursor(Microsoft.UI.Input.InputSystemCursorShape.Arrow);
             }
+        }
+
+        private void DrawingCanvas_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+        {
+            if (isWindowClosing)
+            {
+                e.Handled = true;
+                return;
+            }
+
+            previewLastLeftClickTimestampMs = 0;
+            previewLastLeftClickX = double.NaN;
+            previewLastLeftClickY = double.NaN;
+
+            ReleasePreviewPointerCapturesSafe();
+            ResetPreviewViewportTransform();
+            e.Handled = true;
         }
 
         // 矩形のみ削除するためのメソッド
@@ -5787,7 +6132,7 @@ namespace WoLNamesBlackedOut
         private void FixedFrame_color_icon_ColorChanged()
         {
             RedrawRectanglesWithNewColor();
-            _ = RefreshCurrentPreviewFrameIfPausedAsync();
+            _ = RefreshMaskSettingPreviewAsync();
         }
         private void BlackedOut_ComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
@@ -5809,24 +6154,10 @@ namespace WoLNamesBlackedOut
                 ConfigureMaskSliderForType(BlackedOutSlideBar, value, rememberedValue);
                 RememberMaskSliderValue(blackedOutMaskParamCache, value, BlackedOutSlideBar);
 
-                if (value == "Solid")
-                {
-                    BlackedOut_color.Visibility = Visibility.Visible;
-                    BlackedOutSlideBar.Visibility = Visibility.Collapsed;
-                }
-                else if (IsSliderMaskType(value))
-                {
-                    BlackedOut_color.Visibility = Visibility.Collapsed;
-                    BlackedOutSlideBar.Visibility = Visibility.Visible;
-                }
-                else
-                {
-                    BlackedOut_color.Visibility = Visibility.Collapsed;
-                    BlackedOutSlideBar.Visibility = Visibility.Collapsed;
-                }
+                ApplyBlackedOutMaskControlVisibility(value);
             }
 
-            _ = RefreshCurrentPreviewFrameIfPausedAsync();
+            _ = RefreshMaskSettingPreviewAsync();
         }
 
         private void FixedFrame_ComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -5867,7 +6198,7 @@ namespace WoLNamesBlackedOut
                 RedrawRectanglesWithNewColor();
             }
 
-            _ = RefreshCurrentPreviewFrameIfPausedAsync();
+            _ = RefreshMaskSettingPreviewAsync();
         }
 
         private void Start_End_min_sec_ValueChanged(NumberBox sender, NumberBoxValueChangedEventArgs args)
