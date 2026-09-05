@@ -35,6 +35,7 @@ This project incorporates the following third-party components:
 - **[FFmpeg](https://ffmpeg.org/)** (LGPLv2.1)
 - **[ByteTrack-cpp](https://github.com/derpda/ByteTrack-cpp)** (MIT)
 - **[Eigen](https://gitlab.com/libeigen/eigen)** (MPL 2.0)
+- **[OpenCV](https://github.com/opencv/opencv/blob/5.x/LICENSE)** (Apache 2.0)
 
 - **[Microsoft.Windows.CppWinRT](https://www.nuget.org/packages/Microsoft.Windows.CppWinRT)** ([License](https://www.nuget.org/packages/Microsoft.Windows.CppWinRT/3.0.260715.1/License))
 - **[Microsoft.Windows.SDK.BuildTools](https://www.nuget.org/packages/Microsoft.Windows.SDK.BuildTools)** ([License](https://aka.ms/WinSDKLicenseURL))
