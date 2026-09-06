@@ -2,6 +2,7 @@
 FF14の動画や画像からキャラクター名を隠すWindowsアプリです。<br>
 動画処理にはFFmpegを利用しています。<br>
 ONNX推論にはWindowsMLを利用しています<br>
+[![Watch the video](https://img.youtube.com/vi/39eA4IvvIXo/hqdefault.jpg)](https://youtu.be/39eA4IvvIXo)<br>
 <br>
 アプリのインストールはMicrosoftストアから<br>
 https://apps.microsoft.com/detail/9P5W7QTSH297?hl=ja-jp&gl=JP&ocid=pdpshare
