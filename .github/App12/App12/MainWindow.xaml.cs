@@ -568,8 +568,10 @@ namespace WoLNamesBlackedOut
     private bool previewThresholdUpdateBusy = false;
     private bool suppressFrameSliderValueChanged = false;
         private bool previewSessionAutoOpenBusy = false;
-    private bool imagePreviewRefreshBusy = false;
-    private WriteableBitmap? previewBitmap;
+        private bool imagePreviewRefreshBusy = false;
+        private readonly object previewNativeCloseTaskLock = new object();
+        private Task previewNativeCloseTask = Task.CompletedTask;
+        private WriteableBitmap? previewBitmap;
     private bool previewLayoutInitialized = false;
         private readonly object previewFrameCacheLock = new object();
         private byte[]? lastPreviewFrameBgra;
@@ -832,7 +834,6 @@ namespace WoLNamesBlackedOut
             try
             {
                 StopRealtimePreviewSession(skipNativeClose: false);
-                FrameProcessor.PreviewCloseSessionSafe();
             }
             catch
             {
@@ -3701,12 +3702,31 @@ namespace WoLNamesBlackedOut
             previewTimer?.Stop();
             previewLayoutInitialized = false;
             copyrightDragging = false;
-            if (previewSessionOpen)
-            {
-                bool shouldSkipNativeClose = skipNativeClose || previewTickBusy;
-                previewSessionOpen = false;
 
-                if (!shouldSkipNativeClose)
+            if (!previewSessionOpen)
+            {
+                return;
+            }
+
+            bool shouldSkipNativeClose = skipNativeClose || previewTickBusy;
+            previewSessionOpen = false;
+
+            if (!shouldSkipNativeClose)
+            {
+                QueuePreviewCloseSession();
+            }
+        }
+
+        private void QueuePreviewCloseSession()
+        {
+            lock (previewNativeCloseTaskLock)
+            {
+                if (!previewNativeCloseTask.IsCompleted)
+                {
+                    return;
+                }
+
+                previewNativeCloseTask = Task.Run(() =>
                 {
                     try
                     {
@@ -3716,7 +3736,25 @@ namespace WoLNamesBlackedOut
                     {
                         Debug.WriteLine($"PreviewCloseSessionSafe failed: {ex.Message}");
                     }
-                }
+                });
+            }
+        }
+
+        private async Task WaitForPendingPreviewCloseAsync()
+        {
+            Task pendingClose;
+            lock (previewNativeCloseTaskLock)
+            {
+                pendingClose = previewNativeCloseTask;
+            }
+
+            try
+            {
+                await pendingClose;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"WaitForPendingPreviewCloseAsync failed: {ex.Message}");
             }
         }
 
@@ -3791,6 +3829,7 @@ namespace WoLNamesBlackedOut
         private async Task<bool> StartRealtimePreviewSessionAsync(string sourcePath)
         {
             StopRealtimePreviewSession();
+            await WaitForPendingPreviewCloseAsync();
 
             float confThreshold = GetYoloThreshold();
 
@@ -4952,7 +4991,9 @@ namespace WoLNamesBlackedOut
                 return;
             }
 
+            var startFreezeWatch = Stopwatch.StartNew();
             StopRealtimePreviewSession();
+            Debug.WriteLine($"[StartLatency] StopRealtimePreviewSession dispatch ms={startFreezeWatch.Elapsed.TotalMilliseconds:F2}");
             ResetProcessingPreviewState();
             suppressPreviewToggleEvent = true;
             PreviewButton.IsChecked = false;
@@ -5059,6 +5100,7 @@ namespace WoLNamesBlackedOut
                 }
 
                 await InitializeProcessingPreviewAsync(video_temp_filename_1, start_time);
+                Debug.WriteLine($"[StartLatency] before processing run ms={startFreezeWatch.Elapsed.TotalMilliseconds:F2}");
 
                 StopButton.IsEnabled = false;
                 stopwatch.Reset();
@@ -5178,7 +5220,7 @@ namespace WoLNamesBlackedOut
                         }
                     }
                 }
-                bool shouldReopenPreview = !cancel_state &&
+                bool shouldReopenPreview =
                     !isWindowClosing &&
                     !string.IsNullOrWhiteSpace(v_file_path) &&
                     v_file_path.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase) &&
