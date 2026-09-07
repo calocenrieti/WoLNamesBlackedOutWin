@@ -896,6 +896,11 @@ void VideoPipeline::DecodeThread() {
 	AVStream* video_stream = (video_stream_index_ >= 0 && input_format_ctx_) ? input_format_ctx_->streams[video_stream_index_] : nullptr;
 	double trim_start = std::max(0.0, config_.trim_start_seconds);
 	double trim_end = config_.trim_end_seconds;
+	const int64_t max_video_frames_by_trim =
+		(trim_end > trim_start && trim_end > 0.0)
+		? static_cast<int64_t>(std::llround((trim_end - trim_start) * std::max(1, config_.fps)))
+		: -1;
+	int64_t decoded_video_frames = 0;
 
 	while (!stop_requested_.load()) {
 		// パケットを読み込む
@@ -914,7 +919,7 @@ void VideoPipeline::DecodeThread() {
 					double packet_sec = pkt_ts * av_q2d(audio_stream->time_base);
 					if (trim_end > trim_start && packet_sec > trim_end) {
 						av_packet_unref(packet);
-						break;
+						continue;
 					}
 					if (packet_sec < trim_start) {
 						av_packet_unref(packet);
@@ -934,14 +939,10 @@ void VideoPipeline::DecodeThread() {
 		}
 		// ビデオストリームのみの処理
 		else if (packet->stream_index == video_stream_index_) {
-			if (video_stream && (trim_start > 0.0 || trim_end > 0.0)) {
+			if (video_stream && trim_start > 0.0) {
 				int64_t pkt_ts = (packet->pts != AV_NOPTS_VALUE) ? packet->pts : packet->dts;
 				if (pkt_ts != AV_NOPTS_VALUE) {
 					double packet_sec = pkt_ts * av_q2d(video_stream->time_base);
-					if (trim_end > trim_start && packet_sec > trim_end) {
-						av_packet_unref(packet);
-						break;
-					}
 					if (packet_sec < trim_start) {
 						av_packet_unref(packet);
 						continue;
@@ -951,20 +952,34 @@ void VideoPipeline::DecodeThread() {
 
 			// デコーダーにパケットを送信
 			ret = avcodec_send_packet(decoder_ctx_, packet);
-			if (ret >= 0) {
-				// フレームを受信
-				ret = avcodec_receive_frame(decoder_ctx_, frame);
-				if (ret == 0 && frame->width > 0 && frame->height > 0) {
-					if (video_stream && (trim_start > 0.0 || trim_end > 0.0)) {
+			if (ret == AVERROR(EAGAIN)) {
+				PipelineLog("[DecodeThread] Decoder input full (EAGAIN), draining frames\n");
+			}
+			else if (ret < 0) {
+				PipelineLogFmt("[DecodeThread] avcodec_send_packet failed: %d\n", ret);
+			}
+
+			if (ret >= 0 || ret == AVERROR(EAGAIN)) {
+				while (true) {
+					ret = avcodec_receive_frame(decoder_ctx_, frame);
+					if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
+						break;
+					}
+					if (ret < 0) {
+						PipelineLogFmt("[DecodeThread] avcodec_receive_frame failed: %d\n", ret);
+						break;
+					}
+					if (frame->width <= 0 || frame->height <= 0) {
+						av_frame_unref(frame);
+						continue;
+					}
+					if (video_stream && trim_start > 0.0) {
 						int64_t frame_ts = frame->best_effort_timestamp;
 						if (frame_ts == AV_NOPTS_VALUE) {
 							frame_ts = (frame->pts != AV_NOPTS_VALUE) ? frame->pts : frame->pkt_dts;
 						}
 						if (frame_ts != AV_NOPTS_VALUE) {
 							double frame_sec = frame_ts * av_q2d(video_stream->time_base);
-							if (trim_end > trim_start && frame_sec > trim_end) {
-								break;
-							}
 							if (frame_sec < trim_start) {
 								av_frame_unref(frame);
 								continue;
@@ -1087,16 +1102,26 @@ void VideoPipeline::DecodeThread() {
 						video_cv_.notify_one();
 
 						processed_frames_++;
+						decoded_video_frames++;
 						if (processed_frames_ % 30 == 0) {
 							PipelineLogFmt("[DecodeThread] Decoded %d frames\n", processed_frames_.load());
 						}
+						if (max_video_frames_by_trim > 0 && decoded_video_frames >= max_video_frames_by_trim) {
+							PipelineLogFmt("[DecodeThread] Reached trim frame limit: %lld/%lld\n",
+								static_cast<long long>(decoded_video_frames),
+								static_cast<long long>(max_video_frames_by_trim));
+							av_packet_unref(packet);
+							break;
+						}
 					}
+
+					av_frame_unref(frame);
 				}
 			}
 		}
 
-			av_packet_unref(packet);
-			}
+		av_packet_unref(packet);
+	}
 
 			// デコード終了マーカーを推論キューへ送信
 			{

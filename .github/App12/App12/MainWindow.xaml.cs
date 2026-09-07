@@ -2673,12 +2673,14 @@ namespace WoLNamesBlackedOut
                     int totalMinutes = totalSeconds / 60;
                     int remainingSeconds = totalSeconds % 60;
 
+                    Start_min.Maximum = totalMinutes;
+                    End_min.Maximum = totalMinutes;
                     Start_min.Value = 0;
                     Start_sec.Value = 0;
                     End_min.Value = totalMinutes;
                     End_sec.Value = remainingSeconds;
-                    Start_min.Maximum = totalMinutes;
-                    End_min.Maximum = totalMinutes;
+                    v_start_time = 0;
+                    v_end_time = totalSeconds;
                     FrameSlideBar.Value = 0;
                     FrameSlideBar.Maximum = totalSeconds;
                     FrameTextBlock_e.Text = $"{totalMinutes}:{remainingSeconds:D2}";

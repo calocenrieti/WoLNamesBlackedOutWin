@@ -227,14 +227,16 @@ extern "C" __declspec(dllexport) int __stdcall ProcessVideo(
     config.for_x          = (codec != nullptr) && (std::strstr(codec, "h264") != nullptr);
     char codecDbg[256] = {};
     _snprintf_s(codecDbg, sizeof(codecDbg), _TRUNCATE,
-        "[ProcessVideo] codec=%s for_x=%d fps=%d conf=%.3f size=%dx%d disable_audio=%d\n",
+        "[ProcessVideo] codec=%s for_x=%d fps=%d conf=%.3f size=%dx%d disable_audio=%d trim_start=%.3f trim_end=%.3f\n",
         codec ? codec : "(null)",
         config.for_x ? 1 : 0,
         fps,
         config.conf_threshold,
         width,
         height,
-        disable_audio ? 1 : 0);
+        disable_audio ? 1 : 0,
+        trim_start_seconds,
+        trim_end_seconds);
     OutputDebugStringA(codecDbg);
     config.bitrate        = bitrateValue;
     config.fps            = fps;
