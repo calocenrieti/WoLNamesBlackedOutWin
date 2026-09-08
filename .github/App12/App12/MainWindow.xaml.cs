@@ -1513,14 +1513,12 @@ namespace WoLNamesBlackedOut
                 hwaccel = "cuda";
                 preset = "slow"; // NVIDIAのプリセットを設定
                 useblackedout = true;
-                // ConvertButton.IsEnabled = false;  // TODO: ConvertButton not found in XAML
             }
             else if (gpuvendor == 'A')  //AMDの場合
             {
                 codec = "hevc_amf";
                 hwaccel = "d3d11va";
                 preset = "quality"; // AMDのプリセットを設定（必要に応じて変更可能）
-                // ConvertButton.IsEnabled = false;  // TODO: ConvertButton not found in XAML
                 useblackedout = true;
             }
             else if (gpuvendor == 'I')　//Intelの場合
@@ -1528,17 +1526,14 @@ namespace WoLNamesBlackedOut
                 codec = "hevc_qsv";
                 hwaccel = "qsv";
                 preset = "slow"; // Intelのプリセットを設定（必要に応じて変更可能）
-                // ConvertButton.IsEnabled = false;  // TODO: ConvertButton not found in XAML
                 useblackedout = true;
             }
             else //その他のベンダーの場合(gpuvendor == 'X')
             {
-                UIControl_enable_false();
-                InfoBar.Message = "Sorry, we could not find any available hardware video encoders. The app cannot edit the video.";
-                InfoBar.Severity = InfoBarSeverity.Error;
-                InfoBar.IsOpen = true;
-                useblackedout = false;
-                InfoBar.Visibility = Visibility.Visible;
+                codec = "hevc_mf";
+                hwaccel = "d3d11va";
+                preset = string.Empty; // Media Foundation は preset 未対応
+                useblackedout = true;
             }
 
             //if (gpuvendor != 'X')
@@ -1954,7 +1949,12 @@ namespace WoLNamesBlackedOut
                 return "h264_qsv";
             }
 
-            return "h264_nvenc";
+            if (codec.Contains("mf", StringComparison.OrdinalIgnoreCase))
+            {
+                return "h264_mf";
+            }
+
+            return "h264_mf";
         }
 
         private float GetYoloThreshold()

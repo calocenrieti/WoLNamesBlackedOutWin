@@ -473,8 +473,12 @@ bool VideoPipeline::Initialize(const PipelineConfig& config) {
 				encoder_codec = avcodec_find_encoder_by_name("h264_amf");
 				hw_type = AV_HWDEVICE_TYPE_VAAPI;
 				break;
+			case HwEncoderType::MF:
+				encoder_codec = avcodec_find_encoder_by_name("h264_mf");
+				hw_type = AV_HWDEVICE_TYPE_D3D11VA;
+				break;
 			default:
-				encoder_codec = avcodec_find_encoder_by_name("h264_nvenc");
+				encoder_codec = avcodec_find_encoder_by_name("h264_mf");
 				hw_type = AV_HWDEVICE_TYPE_D3D11VA;
 				break;
 		}
@@ -493,8 +497,12 @@ bool VideoPipeline::Initialize(const PipelineConfig& config) {
 				encoder_codec = avcodec_find_encoder_by_name("hevc_amf");
 				hw_type = AV_HWDEVICE_TYPE_VAAPI;
 				break;
+			case HwEncoderType::MF:
+				encoder_codec = avcodec_find_encoder_by_name("hevc_mf");
+				hw_type = AV_HWDEVICE_TYPE_D3D11VA;
+				break;
 			default:
-				encoder_codec = avcodec_find_encoder_by_name("hevc_nvenc");
+				encoder_codec = avcodec_find_encoder_by_name("hevc_mf");
 				hw_type = AV_HWDEVICE_TYPE_D3D11VA;
 				break;
 		}
@@ -617,7 +625,7 @@ bool VideoPipeline::Initialize(const PipelineConfig& config) {
 		PipelineLog("[VideoPipeline::Initialize] Using SW frame (NV12) encoding path\n");
 	}
 
-	// プリセット設定（FFmpegエンコーダーがサポートする場合）
+	// エンコーダー別オプション設定（MF は preset 未対応のため未指定）
 	AVDictionary* opts = nullptr;
 	if (encoder_type == HwEncoderType::NVENC) {
 		av_dict_set(&opts, "preset", "slow", 0);
@@ -656,6 +664,7 @@ bool VideoPipeline::Initialize(const PipelineConfig& config) {
 			AVCodecParameters* input_audio_params = input_format_ctx_->streams[audio_stream_index_]->codecpar;
 			avcodec_parameters_copy(audio_codec_params, input_audio_params);
 			audio_codec_params->codec_tag = 0;
+			output_audio_stream->time_base = input_format_ctx_->streams[audio_stream_index_]->time_base;
 		}
 	}
 
@@ -896,11 +905,29 @@ void VideoPipeline::DecodeThread() {
 	AVStream* video_stream = (video_stream_index_ >= 0 && input_format_ctx_) ? input_format_ctx_->streams[video_stream_index_] : nullptr;
 	double trim_start = std::max(0.0, config_.trim_start_seconds);
 	double trim_end = config_.trim_end_seconds;
-	const int64_t max_video_frames_by_trim =
-		(trim_end > trim_start && trim_end > 0.0)
-		? static_cast<int64_t>(std::llround((trim_end - trim_start) * std::max(1, config_.fps)))
-		: -1;
-	int64_t decoded_video_frames = 0;
+
+	if (trim_start > 0.0 && input_format_ctx_ && video_stream) {
+		const int64_t seek_target_ts = av_rescale_q(
+			static_cast<int64_t>(std::llround(trim_start * AV_TIME_BASE)),
+			AVRational{ 1, AV_TIME_BASE },
+			video_stream->time_base);
+		int seek_ret = avformat_seek_file(
+			input_format_ctx_,
+			video_stream_index_,
+			INT64_MIN,
+			seek_target_ts,
+			seek_target_ts,
+			AVSEEK_FLAG_BACKWARD);
+		if (seek_ret < 0) {
+			seek_ret = av_seek_frame(input_format_ctx_, video_stream_index_, seek_target_ts, AVSEEK_FLAG_BACKWARD);
+		}
+		if (seek_ret >= 0) {
+			avcodec_flush_buffers(decoder_ctx_);
+			PipelineLogFmt("[DecodeThread] Seeked near trim_start=%.3f sec (ts=%lld)\n", trim_start, static_cast<long long>(seek_target_ts));
+		} else {
+			PipelineLogFmt("[DecodeThread] Seek near trim_start failed: %d, continue without seek\n", seek_ret);
+		}
+	}
 
 	while (!stop_requested_.load()) {
 		// パケットを読み込む
@@ -939,17 +966,6 @@ void VideoPipeline::DecodeThread() {
 		}
 		// ビデオストリームのみの処理
 		else if (packet->stream_index == video_stream_index_) {
-			if (video_stream && trim_start > 0.0) {
-				int64_t pkt_ts = (packet->pts != AV_NOPTS_VALUE) ? packet->pts : packet->dts;
-				if (pkt_ts != AV_NOPTS_VALUE) {
-					double packet_sec = pkt_ts * av_q2d(video_stream->time_base);
-					if (packet_sec < trim_start) {
-						av_packet_unref(packet);
-						continue;
-					}
-				}
-			}
-
 			// デコーダーにパケットを送信
 			ret = avcodec_send_packet(decoder_ctx_, packet);
 			if (ret == AVERROR(EAGAIN)) {
@@ -983,6 +999,21 @@ void VideoPipeline::DecodeThread() {
 							if (frame_sec < trim_start) {
 								av_frame_unref(frame);
 								continue;
+							}
+						}
+					}
+					if (video_stream && trim_end > trim_start && trim_end > 0.0) {
+						int64_t frame_ts = frame->best_effort_timestamp;
+						if (frame_ts == AV_NOPTS_VALUE) {
+							frame_ts = (frame->pts != AV_NOPTS_VALUE) ? frame->pts : frame->pkt_dts;
+						}
+						if (frame_ts != AV_NOPTS_VALUE) {
+							double frame_sec = frame_ts * av_q2d(video_stream->time_base);
+							if (frame_sec > trim_end) {
+								av_frame_unref(frame);
+								av_packet_unref(packet);
+								stop_requested_ = true;
+								break;
 							}
 						}
 					}
@@ -1084,7 +1115,11 @@ void VideoPipeline::DecodeThread() {
 
 					gpu_frame.width = frame->width;
 					gpu_frame.height = frame->height;
-					gpu_frame.pts = frame->pts;
+					int64_t frame_ts = frame->best_effort_timestamp;
+					if (frame_ts == AV_NOPTS_VALUE) {
+						frame_ts = (frame->pts != AV_NOPTS_VALUE) ? frame->pts : frame->pkt_dts;
+					}
+					gpu_frame.pts = frame_ts;
 
 					// キューに追加（テクスチャが有効な場合のみ）
 					if (gpu_frame.texture.Get()) {
@@ -1102,16 +1137,8 @@ void VideoPipeline::DecodeThread() {
 						video_cv_.notify_one();
 
 						processed_frames_++;
-						decoded_video_frames++;
 						if (processed_frames_ % 30 == 0) {
 							PipelineLogFmt("[DecodeThread] Decoded %d frames\n", processed_frames_.load());
-						}
-						if (max_video_frames_by_trim > 0 && decoded_video_frames >= max_video_frames_by_trim) {
-							PipelineLogFmt("[DecodeThread] Reached trim frame limit: %lld/%lld\n",
-								static_cast<long long>(decoded_video_frames),
-								static_cast<long long>(max_video_frames_by_trim));
-							av_packet_unref(packet);
-							break;
 						}
 					}
 
@@ -1121,7 +1148,13 @@ void VideoPipeline::DecodeThread() {
 		}
 
 		av_packet_unref(packet);
+		if (stop_requested_.load()) {
+			break;
+		}
 	}
+
+	decode_finished_ = true;
+	audio_cv_.notify_all();
 
 			// デコード終了マーカーを推論キューへ送信
 			{
@@ -1666,17 +1699,10 @@ void VideoPipeline::EncodeThread() {
 	PipelineLog("[EncodeThread] Started\n");
 	AVPacket* encoded_packet = av_packet_alloc();
 	AVRational input_video_time_base = { 1, std::max(1, config_.fps) };
-	int64_t trim_start_video_ts = 0;
 	if (input_format_ctx_ && video_stream_index_ >= 0 && video_stream_index_ < static_cast<int>(input_format_ctx_->nb_streams)) {
 		AVStream* input_video_stream = input_format_ctx_->streams[video_stream_index_];
 		if (input_video_stream && input_video_stream->time_base.den > 0) {
 			input_video_time_base = input_video_stream->time_base;
-			if (config_.trim_start_seconds > 0.0) {
-				trim_start_video_ts = av_rescale_q(
-					static_cast<int64_t>(std::llround(config_.trim_start_seconds * AV_TIME_BASE)),
-					AVRational{ 1, AV_TIME_BASE },
-					input_video_time_base);
-			}
 		}
 	}
 
@@ -1685,7 +1711,93 @@ void VideoPipeline::EncodeThread() {
 	int written_video_packets = 0;
 	int64_t video_pts_counter = 0;
 	int64_t last_output_pts = AV_NOPTS_VALUE;
+	int64_t first_input_video_pts = AV_NOPTS_VALUE;
 	bool write_failed = false;
+	AVStream* out_video_stream = (output_video_stream_index_ >= 0 && output_video_stream_index_ < static_cast<int>(output_format_ctx_->nb_streams))
+		? output_format_ctx_->streams[output_video_stream_index_]
+		: nullptr;
+	AVStream* in_audio_stream = (audio_stream_index_ >= 0 && input_format_ctx_ && audio_stream_index_ < static_cast<int>(input_format_ctx_->nb_streams))
+		? input_format_ctx_->streams[audio_stream_index_]
+		: nullptr;
+	AVStream* out_audio_stream = (output_audio_stream_index_ >= 0 && output_format_ctx_ && output_audio_stream_index_ < static_cast<int>(output_format_ctx_->nb_streams))
+		? output_format_ctx_->streams[output_audio_stream_index_]
+		: nullptr;
+	int64_t first_input_audio_ts = AV_NOPTS_VALUE;
+
+	auto try_mux_audio = [&](int64_t max_video_out_pts, bool drain_all) {
+		if (!in_audio_stream || !out_audio_stream) {
+			return;
+		}
+
+		const bool use_video_bound = !drain_all && out_video_stream && max_video_out_pts != AV_NOPTS_VALUE;
+		const int64_t max_audio_out_pts = use_video_bound
+			? av_rescale_q(max_video_out_pts, out_video_stream->time_base, out_audio_stream->time_base)
+			: INT64_MAX;
+
+		while (true) {
+			AVPacket* pkt = nullptr;
+			int64_t candidate_out_pts = AV_NOPTS_VALUE;
+			bool has_timestamp = false;
+
+			{
+				std::lock_guard<std::mutex> lock(audio_mutex_);
+				if (audio_queue_.empty()) {
+					break;
+				}
+
+				AVPacket* front = audio_queue_.front();
+				if (!front) {
+					audio_queue_.pop();
+					continue;
+				}
+
+				int64_t src_ts = (front->pts != AV_NOPTS_VALUE) ? front->pts : front->dts;
+				has_timestamp = (src_ts != AV_NOPTS_VALUE);
+				if (has_timestamp) {
+					if (first_input_audio_ts == AV_NOPTS_VALUE) {
+						first_input_audio_ts = src_ts;
+					}
+					int64_t normalized = src_ts - first_input_audio_ts;
+					if (normalized < 0) normalized = 0;
+					candidate_out_pts = av_rescale_q(normalized, in_audio_stream->time_base, out_audio_stream->time_base);
+				}
+
+				if (!drain_all && has_timestamp && use_video_bound && candidate_out_pts > max_audio_out_pts) {
+					break;
+				}
+
+				pkt = front;
+				audio_queue_.pop();
+			}
+
+			if (!pkt) {
+				continue;
+			}
+
+			if (has_timestamp) {
+				if (first_input_audio_ts == AV_NOPTS_VALUE) {
+					first_input_audio_ts = (pkt->pts != AV_NOPTS_VALUE) ? pkt->pts : pkt->dts;
+				}
+				if (pkt->pts != AV_NOPTS_VALUE) {
+					pkt->pts -= first_input_audio_ts;
+					if (pkt->pts < 0) pkt->pts = 0;
+				}
+				if (pkt->dts != AV_NOPTS_VALUE) {
+					pkt->dts -= first_input_audio_ts;
+					if (pkt->dts < 0) pkt->dts = 0;
+				}
+			}
+
+			pkt->stream_index = output_audio_stream_index_;
+			av_packet_rescale_ts(pkt, in_audio_stream->time_base, out_audio_stream->time_base);
+			int audio_write_ret = av_interleaved_write_frame(output_format_ctx_, pkt);
+			if (audio_write_ret < 0) {
+				write_failed = true;
+			}
+			av_packet_free(&pkt);
+		}
+	};
+
 	PipelineLog("[EncodeThread] Entering main encode loop\n");
 	while (!stop_requested_.load() || !inference_output_queue_.empty()) {
 		GpuFrame frame;
@@ -1893,12 +2005,12 @@ void VideoPipeline::EncodeThread() {
 
 		int64_t output_pts = video_pts_counter;
 		if (frame.pts != AV_NOPTS_VALUE) {
-			int64_t normalized_pts = frame.pts;
-			if (trim_start_video_ts > 0) {
-				normalized_pts -= trim_start_video_ts;
-				if (normalized_pts < 0) {
-					normalized_pts = 0;
-				}
+			if (first_input_video_pts == AV_NOPTS_VALUE) {
+				first_input_video_pts = frame.pts;
+			}
+			int64_t normalized_pts = frame.pts - first_input_video_pts;
+			if (normalized_pts < 0) {
+				normalized_pts = 0;
 			}
 			output_pts = av_rescale_q(normalized_pts, input_video_time_base, encoder_ctx_->time_base);
 			if (output_pts < 0) {
@@ -2065,11 +2177,18 @@ void VideoPipeline::EncodeThread() {
 				av_packet_rescale_ts(encoded_packet,
 					encoder_ctx_->time_base,
 					output_format_ctx_->streams[output_video_stream_index_]->time_base);
+				const int64_t current_video_out_pts =
+					(encoded_packet->pts != AV_NOPTS_VALUE)
+					? encoded_packet->pts
+					: encoded_packet->dts;
 				int write_ret = av_interleaved_write_frame(output_format_ctx_, encoded_packet);
 				if (write_ret < 0) {
 					write_failed = true;
 				} else {
 					written_video_packets++;
+					if (current_video_out_pts != AV_NOPTS_VALUE) {
+						try_mux_audio(current_video_out_pts, false);
+					}
 				}
 				av_packet_unref(encoded_packet);
 				packet_count++;
@@ -2093,69 +2212,24 @@ void VideoPipeline::EncodeThread() {
 		av_packet_rescale_ts(encoded_packet,
 			encoder_ctx_->time_base,
 			output_format_ctx_->streams[output_video_stream_index_]->time_base);
+		const int64_t current_video_out_pts =
+			(encoded_packet->pts != AV_NOPTS_VALUE)
+			? encoded_packet->pts
+			: encoded_packet->dts;
 		int flush_write_ret = av_interleaved_write_frame(output_format_ctx_, encoded_packet);
 		if (flush_write_ret < 0) {
 			write_failed = true;
 		} else {
 			written_video_packets++;
+			if (current_video_out_pts != AV_NOPTS_VALUE) {
+				try_mux_audio(current_video_out_pts, false);
+			}
 		}
 		av_packet_unref(encoded_packet);
 	}
 
-	// 音声は再エンコードせず、入力パケットをそのまま出力へmuxする
-	if (audio_stream_index_ >= 0 && output_audio_stream_index_ >= 0) {
-		std::queue<AVPacket*> local_audio_queue;
-		{
-			std::lock_guard<std::mutex> lock(audio_mutex_);
-			std::swap(local_audio_queue, audio_queue_);
-		}
-
-		AVStream* in_audio_stream = input_format_ctx_->streams[audio_stream_index_];
-		AVStream* out_audio_stream = output_format_ctx_->streams[output_audio_stream_index_];
-		const int64_t trim_start_audio_ts = (config_.trim_start_seconds > 0.0)
-			? av_rescale_q(static_cast<int64_t>(std::llround(config_.trim_start_seconds * AV_TIME_BASE)), AVRational{1, AV_TIME_BASE}, in_audio_stream->time_base)
-			: 0;
-		const int64_t trim_end_audio_ts = (config_.trim_end_seconds > config_.trim_start_seconds && config_.trim_end_seconds > 0.0)
-			? av_rescale_q(static_cast<int64_t>(std::llround(config_.trim_end_seconds * AV_TIME_BASE)), AVRational{1, AV_TIME_BASE}, in_audio_stream->time_base)
-			: AV_NOPTS_VALUE;
-
-		while (!local_audio_queue.empty()) {
-			AVPacket* pkt = local_audio_queue.front();
-			local_audio_queue.pop();
-			if (!pkt) continue;
-
-			if (trim_start_audio_ts > 0 || trim_end_audio_ts != AV_NOPTS_VALUE) {
-				int64_t pkt_ts = (pkt->pts != AV_NOPTS_VALUE) ? pkt->pts : pkt->dts;
-				if (pkt_ts != AV_NOPTS_VALUE) {
-					if (trim_end_audio_ts != AV_NOPTS_VALUE && pkt_ts > trim_end_audio_ts) {
-						av_packet_free(&pkt);
-						continue;
-					}
-					if (pkt_ts < trim_start_audio_ts) {
-						av_packet_free(&pkt);
-						continue;
-					}
-				}
-
-				if (pkt->pts != AV_NOPTS_VALUE) {
-					pkt->pts -= trim_start_audio_ts;
-				}
-				if (pkt->dts != AV_NOPTS_VALUE) {
-					pkt->dts -= trim_start_audio_ts;
-				}
-				if (pkt->pts != AV_NOPTS_VALUE && pkt->pts < 0) pkt->pts = 0;
-				if (pkt->dts != AV_NOPTS_VALUE && pkt->dts < 0) pkt->dts = 0;
-			}
-
-			pkt->stream_index = output_audio_stream_index_;
-			av_packet_rescale_ts(pkt, in_audio_stream->time_base, out_audio_stream->time_base);
-			int audio_write_ret = av_interleaved_write_frame(output_format_ctx_, pkt);
-			if (audio_write_ret < 0) {
-				write_failed = true;
-			}
-			av_packet_free(&pkt);
-		}
-	}
+	// 残音声を最終排出
+	try_mux_audio(AV_NOPTS_VALUE, true);
 
 	int trailer_ret = av_write_trailer(output_format_ctx_);
 	PipelineLogFmt("[EncodeThread] av_write_trailer returned: %d\n", trailer_ret);

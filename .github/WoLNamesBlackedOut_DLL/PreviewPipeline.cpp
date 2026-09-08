@@ -942,8 +942,11 @@ bool PreviewPipeline::ApplyMask(ID3D11Texture2D* source_texture, uint32_t width,
         return true;
     }
 
-    // 検出部マスクテクスチャを生成
-    auto detection_mask = mask_shader_.CreateMaskTexture(width, height, active_detections);
+    // 検出部マスクテクスチャを生成（No_Inference時は生成しない）
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> detection_mask;
+    if (blacked_type != MaskType::No_Inference && !active_detections.empty()) {
+        detection_mask = mask_shader_.CreateMaskTexture(width, height, active_detections);
+    }
     // 固定矩形マスクテクスチャを生成
     std::vector<Detection> fixed_detections;
     for (int i = 0; i < mask_params_.fixed_rect_count && i < 64; ++i) {
@@ -960,7 +963,7 @@ bool PreviewPipeline::ApplyMask(ID3D11Texture2D* source_texture, uint32_t width,
 
     // 両方のマスクが空でも、後段のcopyright合成は実行できるように
     // ここでは早期returnせず、output_texture_に元画像をセットして処理継続する
-    bool has_detection = detection_mask != nullptr && !active_detections.empty();
+    bool has_detection = detection_mask != nullptr;
     bool has_fixed = fixed_mask != nullptr && !fixed_detections.empty();
 
     if (!has_detection && !has_fixed) {

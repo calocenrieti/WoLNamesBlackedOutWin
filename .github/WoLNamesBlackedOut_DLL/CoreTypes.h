@@ -100,6 +100,7 @@ namespace WoLNamesBlackedOut::Core {
 		NVENC,       // NVIDIA
 		QSV,         // Intel Quick Sync
 		AMF,         // AMD
+		MF,          // Media Foundation
 		Auto         // 自動選択
 	};
 

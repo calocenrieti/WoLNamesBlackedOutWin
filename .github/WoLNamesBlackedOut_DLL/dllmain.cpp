@@ -61,6 +61,7 @@ static WoLNamesBlackedOut::Core::HwEncoderType EncoderTypeFromString(const char*
     if (s.find("nvenc") != std::string::npos) return WoLNamesBlackedOut::Core::HwEncoderType::NVENC;
     if (s.find("qsv") != std::string::npos)   return WoLNamesBlackedOut::Core::HwEncoderType::QSV;
     if (s.find("amf") != std::string::npos)   return WoLNamesBlackedOut::Core::HwEncoderType::AMF;
+    if (s.find("_mf") != std::string::npos || s.find("mf") != std::string::npos) return WoLNamesBlackedOut::Core::HwEncoderType::MF;
     return WoLNamesBlackedOut::Core::HwEncoderType::Auto;
 }
 

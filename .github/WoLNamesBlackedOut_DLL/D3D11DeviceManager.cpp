@@ -310,7 +310,7 @@ WoLNamesBlackedOut::Core::HwEncoderType D3D11DeviceManager::AutoDetectEncoder() 
 		case WoLNamesBlackedOut::Core::GpuVendor::AMD:
 			return WoLNamesBlackedOut::Core::HwEncoderType::AMF;
 		default:
-			return WoLNamesBlackedOut::Core::HwEncoderType::None;
+			return WoLNamesBlackedOut::Core::HwEncoderType::MF;
 	}
 }
 
@@ -363,6 +363,9 @@ AVBufferRef* D3D11DeviceManager::CreateEncoderFramesContext(WoLNamesBlackedOut::
 			break;
 		case WoLNamesBlackedOut::Core::HwEncoderType::AMF:
 			hw_device_type = AV_HWDEVICE_TYPE_VAAPI;
+			break;
+		case WoLNamesBlackedOut::Core::HwEncoderType::MF:
+			hw_device_type = AV_HWDEVICE_TYPE_D3D11VA;
 			break;
 		default:
 			hw_device_type = AV_HWDEVICE_TYPE_D3D11VA;
