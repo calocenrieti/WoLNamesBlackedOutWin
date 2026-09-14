@@ -608,6 +608,12 @@ namespace WoLNamesBlackedOut
         private double previewLastLeftClickY = double.NaN;
         private const long PreviewDoubleClickThresholdMs = 350;
         private const double PreviewDoubleClickThresholdPixels = 8.0;
+        private const double DefaultPreviewHeight = 576.0;
+        private double previewSourcePixelWidth = 0.0;
+        private double previewSourcePixelHeight = 0.0;
+        private bool previewViewportResizeInProgress = false;
+        private bool previewViewportFitModeActive = false;
+        private bool suppressNextWindowSizeChangedFitActivation = false;
         private ScaleTransform? previewScaleTransform;
         private TranslateTransform? previewTranslateTransform;
         private RectangleGeometry? previewViewportClipGeometry;
@@ -1273,6 +1279,7 @@ namespace WoLNamesBlackedOut
 
             RootGrid.KeyDown += MainWindow_KeyDown;
             RootGrid.Loaded += (_, __) => RootGrid.Focus(FocusState.Programmatic);
+            this.SizeChanged += MainWindow_SizeChanged;
             InitializePreviewCanvasTransform();
 
             StartupTrace("ctor:after event hooks");
@@ -1593,7 +1600,181 @@ namespace WoLNamesBlackedOut
                 return;
             }
 
+            if (previewViewportResizeInProgress)
+            {
+                UpdatePreviewViewportClip();
+                return;
+            }
+
+            if (!previewViewportFitModeActive)
+            {
+                UpdatePreviewViewportClip();
+                return;
+            }
+
+            FitPreviewViewportToCurrentWindow();
+        }
+
+        private void MainWindow_SizeChanged(object sender, WindowSizeChangedEventArgs args)
+        {
+            if (isWindowClosing)
+            {
+                return;
+            }
+
+            if (suppressNextWindowSizeChangedFitActivation)
+            {
+                suppressNextWindowSizeChangedFitActivation = false;
+                return;
+            }
+
+            previewViewportFitModeActive = true;
+            FitPreviewViewportToCurrentWindow();
+        }
+
+        private bool TryGetActivePreviewSourceSize(out double sourceWidth, out double sourceHeight)
+        {
+            sourceWidth = previewSourcePixelWidth;
+            sourceHeight = previewSourcePixelHeight;
+
+            if (sourceWidth > 0 && sourceHeight > 0)
+            {
+                return true;
+            }
+
+            if (v_width > 0 && v_height > 0)
+            {
+                sourceWidth = v_width;
+                sourceHeight = v_height;
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool TryGetPreviewAvailableSize(out double availableWidth, out double availableHeight)
+        {
+            availableWidth = 0;
+            availableHeight = 0;
+
+            if (RootGrid == null)
+            {
+                return false;
+            }
+
+            double rootWidth = RootGrid.ActualWidth;
+            double rootHeight = RootGrid.ActualHeight;
+            if (rootWidth <= 0 || rootHeight <= 0 || double.IsNaN(rootWidth) || double.IsNaN(rootHeight))
+            {
+                return false;
+            }
+
+            double leftPanelWidth = ControlPanel?.ActualWidth ?? 0;
+            availableWidth = rootWidth - leftPanelWidth - 48.0;
+
+            double previewTop = 0;
+            try
+            {
+                var transform = PreviewContainer.TransformToVisual(RootGrid);
+                var topPoint = transform.TransformPoint(new Windows.Foundation.Point(0, 0));
+                previewTop = topPoint.Y;
+            }
+            catch (ArgumentException)
+            {
+                previewTop = 0;
+            }
+            catch (COMException)
+            {
+                previewTop = 0;
+            }
+
+            double footerHeight = PreviewFooterPanel?.ActualHeight ?? 0;
+            availableHeight = rootHeight - previewTop - footerHeight - 24.0;
+
+            if (availableWidth <= 0 || availableHeight <= 0 || double.IsNaN(availableWidth) || double.IsNaN(availableHeight))
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        private double GetPreviewBaseHeight()
+        {
+            double previewHeight = image_preview.Height;
+            if (previewHeight <= 0 || double.IsNaN(previewHeight) || double.IsInfinity(previewHeight))
+            {
+                previewHeight = image_preview.ActualHeight;
+            }
+
+            if (previewHeight <= 0 || double.IsNaN(previewHeight) || double.IsInfinity(previewHeight))
+            {
+                previewHeight = DefaultPreviewHeight;
+            }
+
+            return previewHeight;
+        }
+
+        private bool FitPreviewViewportToCurrentWindow()
+        {
+            if (isWindowClosing || previewViewportResizeInProgress)
+            {
+                return false;
+            }
+
+            if (!TryGetActivePreviewSourceSize(out double sourceWidth, out double sourceHeight))
+            {
+                return false;
+            }
+
+            double targetWidth;
+            double targetHeight;
+            if (TryGetPreviewAvailableSize(out double availableWidth, out double availableHeight))
+            {
+                double scale = Math.Min(availableWidth / sourceWidth, availableHeight / sourceHeight);
+                if (scale <= 0 || double.IsNaN(scale) || double.IsInfinity(scale))
+                {
+                    scale = GetPreviewBaseHeight() / sourceHeight;
+                }
+
+                targetWidth = Math.Max(1.0, Math.Round(sourceWidth * scale));
+                targetHeight = Math.Max(1.0, Math.Round(sourceHeight * scale));
+            }
+            else
+            {
+                targetHeight = GetPreviewBaseHeight();
+                targetWidth = Math.Max(1.0, sourceWidth * (targetHeight / sourceHeight));
+            }
+
+            bool sizeChanged = Math.Abs(image_preview.Width - targetWidth) > 0.5
+                               || Math.Abs(image_preview.Height - targetHeight) > 0.5;
+
+            previewViewportResizeInProgress = true;
+            try
+            {
+                scaleFactor = targetHeight / sourceHeight;
+                image_preview.Width = targetWidth;
+                image_preview.Height = targetHeight;
+                DrawingCanvas.Width = targetWidth;
+                DrawingCanvas.Height = targetHeight;
+                PreviewContainer.Width = targetWidth;
+                PreviewContainer.Height = targetHeight;
+                UpdatePreviewViewportClip(targetWidth, targetHeight);
+                RedrawCropOverlay();
+            }
+            finally
+            {
+                previewViewportResizeInProgress = false;
+            }
+
+            return sizeChanged;
+        }
+
+        private void FitPreviewViewportAndApplyTransform()
+        {
+            FitPreviewViewportToCurrentWindow();
             UpdatePreviewViewportClip();
+            ApplyPreviewCanvasTransform();
         }
 
         private void UpdatePreviewViewportClip(double? width = null, double? height = null)
@@ -1654,22 +1835,6 @@ namespace WoLNamesBlackedOut
             }
         }
 
-        private double GetPreviewBaseHeight()
-        {
-            double previewHeight = image_preview.Height;
-            if (previewHeight <= 0 || double.IsNaN(previewHeight) || double.IsInfinity(previewHeight))
-            {
-                previewHeight = image_preview.ActualHeight;
-            }
-
-            if (previewHeight <= 0 || double.IsNaN(previewHeight) || double.IsInfinity(previewHeight))
-            {
-                previewHeight = 576;
-            }
-
-            return previewHeight;
-        }
-
         private int ConfigurePreviewViewport(double sourcePixelWidth, double sourcePixelHeight)
         {
             if (isWindowClosing)
@@ -1682,25 +1847,36 @@ namespace WoLNamesBlackedOut
                 return 800;
             }
 
-            double previewHeight = GetPreviewBaseHeight();
-            scaleFactor = previewHeight / sourcePixelHeight;
-            if (scaleFactor <= 0 || double.IsNaN(scaleFactor) || double.IsInfinity(scaleFactor))
+            previewSourcePixelWidth = sourcePixelWidth;
+            previewSourcePixelHeight = sourcePixelHeight;
+
+            if (previewViewportFitModeActive)
             {
-                scaleFactor = 1.0;
+                FitPreviewViewportAndApplyTransform();
+            }
+            else
+            {
+                double previewHeight = DefaultPreviewHeight;
+                scaleFactor = previewHeight / sourcePixelHeight;
+                if (scaleFactor <= 0 || double.IsNaN(scaleFactor) || double.IsInfinity(scaleFactor))
+                {
+                    scaleFactor = 1.0;
+                }
+
+                double previewWidth = Math.Max(1.0, sourcePixelWidth * scaleFactor);
+
+                image_preview.Width = previewWidth;
+                image_preview.Height = previewHeight;
+                DrawingCanvas.Width = previewWidth;
+                DrawingCanvas.Height = previewHeight;
+                PreviewContainer.Width = previewWidth;
+                PreviewContainer.Height = previewHeight;
+                UpdatePreviewViewportClip(previewWidth, previewHeight);
+                RedrawCropOverlay();
+                ApplyPreviewCanvasTransform();
             }
 
-            double previewWidth = Math.Max(1.0, sourcePixelWidth * scaleFactor);
-
-            image_preview.Width = previewWidth;
-            image_preview.Height = previewHeight;
-            DrawingCanvas.Width = previewWidth;
-            DrawingCanvas.Height = previewHeight;
-            PreviewContainer.Width = previewWidth;
-            PreviewContainer.Height = previewHeight;
-            UpdatePreviewViewportClip(previewWidth, previewHeight);
-            RedrawCropOverlay();
-
-            return 800 + (int)Math.Round(previewWidth) - 280;
+            return 800 + (int)Math.Round(Math.Max(1.0, image_preview.Width)) - 280;
         }
 
         private void ApplyPreviewCanvasTransform()
@@ -1770,7 +1946,7 @@ namespace WoLNamesBlackedOut
             }
         }
 
-        private void ResetPreviewViewportTransform()
+        private void ResetPreviewViewportTransform(bool fitToCurrentWindow = true)
         {
             previewPanning = false;
             previewZoomScale = 1.0;
@@ -1780,7 +1956,16 @@ namespace WoLNamesBlackedOut
             previewPanStartY = 0.0;
             previewPanOriginX = 0.0;
             previewPanOriginY = 0.0;
-            ApplyPreviewCanvasTransform();
+
+            previewViewportFitModeActive = fitToCurrentWindow;
+            if (fitToCurrentWindow)
+            {
+                FitPreviewViewportAndApplyTransform();
+            }
+            else
+            {
+                ApplyPreviewCanvasTransform();
+            }
         }
 
         private bool TryHandlePreviewDoubleClick(PointerRoutedEventArgs e, bool isCtrlPressed, bool isMiddleButtonPressed, bool isLeftButtonPressed, bool isRightButtonPressed)
@@ -1893,6 +2078,7 @@ namespace WoLNamesBlackedOut
                     Height = physicalHeight
                 };
 
+                suppressNextWindowSizeChangedFitActivation = true;
                 this.AppWindow.Resize(targetSize);
                 autoResizedForCurrentSource = true;
             }
@@ -2506,6 +2692,13 @@ namespace WoLNamesBlackedOut
         }
         private async void RootGrid_Drop(object sender, DragEventArgs e)
         {
+            if (IsVideoProcessingInProgress())
+            {
+                e.AcceptedOperation = DataPackageOperation.None;
+                e.Handled = true;
+                return;
+            }
+
             if (e.DataView.Contains(StandardDataFormats.StorageItems))
             {
                 var items = await e.DataView.GetStorageItemsAsync();
@@ -2532,12 +2725,27 @@ namespace WoLNamesBlackedOut
         }
         private void RootGrid_DragOver(object sender, DragEventArgs e)
         {
+            if (IsVideoProcessingInProgress())
+            {
+                e.AcceptedOperation = DataPackageOperation.None;
+                e.Handled = true;
+                return;
+            }
+
             if (e.DataView.Contains(StandardDataFormats.StorageItems))
                 e.AcceptedOperation = DataPackageOperation.Copy;
             else
                 e.AcceptedOperation = DataPackageOperation.None;
             e.Handled = true;
         }
+
+        private bool IsVideoProcessingInProgress()
+        {
+            return running_state
+                && !string.IsNullOrWhiteSpace(v_file_path)
+                && System.IO.Path.GetExtension(v_file_path).Equals(".mp4", StringComparison.OrdinalIgnoreCase);
+        }
+
         private async Task HandleFileSelectedAsync(StorageFile file)
         {
             UIControl_enable_false();
@@ -2545,7 +2753,7 @@ namespace WoLNamesBlackedOut
             autoResizedForCurrentSource = false;
             RemoveCropOverlayShapes();
             StopRealtimePreviewSession();
-            ResetPreviewViewportTransform();
+            ResetPreviewViewportTransform(fitToCurrentWindow: false);
             suppressPreviewToggleEvent = true;
             PreviewButton.IsChecked = false;
             suppressPreviewToggleEvent = false;

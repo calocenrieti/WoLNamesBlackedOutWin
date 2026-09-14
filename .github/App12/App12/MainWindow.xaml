@@ -76,7 +76,7 @@
                 </StackPanel>
             </Grid>
             <StackPanel HorizontalAlignment="Left" Orientation="Horizontal" AllowDrop="True" Drop="RootGrid_Drop" DragOver="RootGrid_DragOver">
-                <StackPanel >
+                <StackPanel x:Name="ControlPanel">
                     <!-- Select File Section -->
                     <TextBlock x:Uid="SelectFileSectionTitle" Text="Select File or Drag and Drop File" Style="{StaticResource SubheaderTextBlockStyle}" Drop="RootGrid_Drop" FontWeight="Bold" FontSize="16" Margin="20,4,4,4" VerticalAlignment="Center"></TextBlock>
 
@@ -275,7 +275,7 @@
                         <InfoBar x:Uid="InfoBar" x:Name="InfoBar" Visibility="Collapsed" IsOpen="True" IsIconVisible="True" Severity="Success" IsClosable="True" Message="TensorRT Engine build success!" Margin="4"/>
                     </StackPanel>
                 </StackPanel>
-                <StackPanel Orientation="Vertical" AllowDrop="True" Drop="RootGrid_Drop" DragOver="RootGrid_DragOver">
+                <StackPanel x:Name="PreviewPanel" Orientation="Vertical" AllowDrop="True" Drop="RootGrid_Drop" DragOver="RootGrid_DragOver">
                     <StackPanel>
                         <Grid x:Name="PreviewContainer" Height="576" SizeChanged="PreviewContainer_SizeChanged">
                             <local:CursorCanvas x:Name="DrawingCanvas" Background="Transparent" Height="576" AllowDrop="True" Drop="RootGrid_Drop" DragOver="RootGrid_DragOver"
@@ -291,7 +291,7 @@
                     <!--<Line Stroke="Gray" X1="10" Y1="0" X2="470" Y2="0" StrokeThickness="1" Margin="0,8,12,0"/>-->
                     <!-- Preview Section -->
                     <!--<TextBlock x:Uid="PreviewSectionTitle" Text="Preview"  Style="{StaticResource SubheaderTextBlockStyle}" FontWeight="Bold" FontSize="16" Margin="20,12,4,4" VerticalAlignment="Center"></TextBlock>-->
-                    <StackPanel >
+                    <StackPanel x:Name="PreviewFooterPanel">
                         <StackPanel  Orientation="Horizontal" Margin="12,4,4,4">
 
                             <Slider x:Name="FrameSlideBar" Minimum="0" Maximum="100" Width="300" HorizontalAlignment="Left" Margin="0,0,0,0" ValueChanged="FrameSlideBar_ValueChanged"/>
