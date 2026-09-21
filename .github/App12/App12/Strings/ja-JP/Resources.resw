@@ -300,4 +300,52 @@
   <data name="Runtime.BlackedOutStop" xml:space="preserve">
     <value> BlackedOut停止</value>
   </data>
+  <data name="BlackedOutImageSettingsText.Text" xml:space="preserve">
+    <value> 画像設定</value>
+  </data>
+  <data name="FixedFrameImageSettingsText.Text" xml:space="preserve">
+    <value> 画像設定</value>
+  </data>
+  <data name="ImageMask.DialogTitle" xml:space="preserve">
+    <value>Imageマスク設定</value>
+  </data>
+  <data name="ImageMask.PlacementHeader" xml:space="preserve">
+    <value>貼り付け方法</value>
+  </data>
+  <data name="ImageMask.Mode.Fit" xml:space="preserve">
+    <value>フィット</value>
+  </data>
+  <data name="ImageMask.Mode.Tile1" xml:space="preserve">
+    <value>タイル1</value>
+  </data>
+  <data name="ImageMask.Mode.Tile2" xml:space="preserve">
+    <value>タイル2</value>
+  </data>
+  <data name="ImageMask.Mode.Random" xml:space="preserve">
+    <value>ランダム</value>
+  </data>
+  <data name="ImageMask.SelectImageButton" xml:space="preserve">
+    <value>画像を選択</value>
+  </data>
+  <data name="ImageMask.UseDefaultButton" xml:space="preserve">
+    <value>デフォルトに戻す</value>
+  </data>
+  <data name="ImageMask.CustomImageAddonInfo" xml:space="preserve">
+    <value>※カスタム画像の選択は有料アドオンで有効になります。</value>
+  </data>
+  <data name="ImageMask.RandomAllowOverflow" xml:space="preserve">
+    <value>ランダムで検出エリアからはみ出し可</value>
+  </data>
+  <data name="ImageMask.PaidAddonTitle" xml:space="preserve">
+    <value>有料アドオン</value>
+  </data>
+  <data name="ImageMask.PaidAddonPrompt" xml:space="preserve">
+    <value>カスタム画像の選択には有料アドオンが必要です。購入しますか？</value>
+  </data>
+  <data name="ImageMask.PurchaseButton" xml:space="preserve">
+    <value>購入</value>
+  </data>
+  <data name="Common.Cancel" xml:space="preserve">
+    <value>キャンセル</value>
+  </data>
 </root>

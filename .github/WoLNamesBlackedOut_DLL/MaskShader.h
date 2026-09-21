@@ -183,6 +183,18 @@ public:
         Microsoft::WRL::ComPtr<ID3D11Texture2D>& output
     );
 
+    bool ApplyImageMask(
+        ID3D11Texture2D* source,
+        ID3D11ShaderResourceView* image_mask_srv,
+        const std::vector<Detection>& detections,
+        int image_mode,
+        float random_min_scale,
+        float random_max_scale,
+        bool random_allow_overflow,
+        int64_t random_layout_seed,
+        Microsoft::WRL::ComPtr<ID3D11Texture2D>& output
+    );
+
     /**
      * @brief NV12テクスチャをBGRAに変換（GPUゼロコピー）
      * @param nv12_y Y平面テクスチャ（R8_UNORM）
@@ -306,6 +318,32 @@ private:
 
     // マスク合成シェーダー
     Microsoft::WRL::ComPtr<ID3D11PixelShader> composite_pixel_shader_;
+
+    // 画像マスクシェーダー
+    Microsoft::WRL::ComPtr<ID3D11PixelShader> image_mask_pixel_shader_;
+    struct ImageMaskConstantBuffer {
+        float roi_x;
+        float roi_y;
+        float roi_w;
+        float roi_h;
+        float texture_width;
+        float texture_height;
+        float image_width;
+        float image_height;
+        float tile_width;
+        float tile_height;
+        float random_offset_x;
+        float random_offset_y;
+        float random_scale;
+        float random_target_h;
+        float random_sin;
+        float random_cos;
+        uint32_t image_mode;
+        uint32_t random_allow_overflow;
+        uint32_t _padding0;
+        uint32_t _padding1;
+    };
+    Microsoft::WRL::ComPtr<ID3D11Buffer> image_mask_constant_buffer_;
 
     // NV12→BGRA変換シェーダー
     Microsoft::WRL::ComPtr<ID3D11PixelShader> nv12_to_bgra_pixel_shader_;

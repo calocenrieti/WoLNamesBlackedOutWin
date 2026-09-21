@@ -130,6 +130,7 @@ private:
 	bool PerformLetterboxTransform(const GpuFrame& input, PreProcessResult& preproc);
 	bool LoadImageToTexture(const wchar_t* file_path, Microsoft::WRL::ComPtr<ID3D11Texture2D>& out_texture, uint32_t& out_width, uint32_t& out_height);
 	bool EnsureCopyrightWatermarkLoaded();
+	bool EnsureBlackedOutImageMaskLoaded(const std::wstring& preferredOverride = L"");
 	struct LetterboxConstantBuffer {
 		float scale_x;
 		float scale_y;
@@ -261,6 +262,10 @@ private:
 	CpuPreprocessor cpu_preprocessor_;
 	CpuPostprocessor cpu_postprocessor_;
 	cv::Mat cached_watermark_bgra_;
+	cv::Mat cached_blackedout_image_bgra_;
+	Microsoft::WRL::ComPtr<ID3D11Texture2D> cached_blackedout_image_texture_;
+	Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> cached_blackedout_image_srv_;
+	std::wstring blackedout_image_path_loaded_;
 
 	// 透かしリソース
 	Microsoft::WRL::ComPtr<ID3D11Texture2D> copyright_texture_;

@@ -3,6 +3,8 @@
 #include <iostream>
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <random>
 #include <d3dcompiler.h>
 #pragma comment(lib, "d3dcompiler.lib")
 
@@ -348,6 +350,95 @@ static const char* copyright_pixel_shader_src =
     "}\n";
 
 // ============================================================
+// 画像マスク（Fit/Tile1/Tile2/Random）
+// ============================================================
+static const char* image_mask_pixel_shader_src =
+    "struct PS_INPUT {\n"
+    "    float4 pos : SV_POSITION;\n"
+    "    float2 uv : TEXCOORD0;\n"
+    "};\n"
+    "Texture2D sourceTexture : register(t0);\n"
+    "Texture2D imageMaskTexture : register(t1);\n"
+    "SamplerState samplerState : register(s0);\n"
+    "\n"
+    "cbuffer ImageMaskConstantBuffer : register(b0) {\n"
+    "    float roi_x;\n"
+    "    float roi_y;\n"
+    "    float roi_w;\n"
+    "    float roi_h;\n"
+    "    float texture_width;\n"
+    "    float texture_height;\n"
+    "    float image_width;\n"
+    "    float image_height;\n"
+    "    float tile_width;\n"
+    "    float tile_height;\n"
+    "    float random_offset_x;\n"
+    "    float random_offset_y;\n"
+    "    float random_scale;\n"
+    "    float random_target_h;\n"
+    "    float random_sin;\n"
+    "    float random_cos;\n"
+    "    uint image_mode;\n"
+    "    uint random_allow_overflow;\n"
+    "    uint _padding0;\n"
+    "    uint _padding1;\n"
+    "};\n"
+    "\n"
+    "float2 RepeatUv(float2 p, float2 span) {\n"
+    "    float2 s = max(span, float2(1.0, 1.0));\n"
+    "    return frac(p / s);\n"
+    "}\n"
+    "\n"
+    "float4 main(PS_INPUT input) : SV_TARGET {\n"
+    "    float4 src = sourceTexture.Sample(samplerState, input.uv);\n"
+    "    float2 texSize = float2(texture_width, texture_height);\n"
+    "    float2 px = input.uv * texSize;\n"
+    "\n"
+    "    bool inRoi = (px.x >= roi_x && px.x < (roi_x + roi_w) && px.y >= roi_y && px.y < (roi_y + roi_h));\n"
+    "    if (!inRoi) {\n"
+    "        return src;\n"
+    "    }\n"
+    "\n"
+    "    float2 local = px - float2(roi_x, roi_y);\n"
+    "    float2 sampleUv = float2(0.0, 0.0);\n"
+    "\n"
+    "    if (image_mode == 0) {\n"
+    "        sampleUv = local / max(float2(roi_w, roi_h), float2(1.0, 1.0));\n"
+    "    } else if (image_mode == 1) {\n"
+    "        float2 rep = float2(tile_width, max(1.0, roi_h));\n"
+    "        sampleUv = RepeatUv(local, rep);\n"
+    "    } else if (image_mode == 2) {\n"
+    "        float2 rep = float2(tile_width, tile_height);\n"
+    "        sampleUv = RepeatUv(local, rep);\n"
+    "    } else {\n"
+    "        float2 bboxLocal = px - float2(random_offset_x, random_offset_y);\n"
+    "        float2 bboxSize = max(float2(tile_width, tile_height), float2(1.0, 1.0));\n"
+    "        if (bboxLocal.x < 0.0 || bboxLocal.y < 0.0 || bboxLocal.x >= bboxSize.x || bboxLocal.y >= bboxSize.y) {\n"
+    "            return src;\n"
+    "        }\n"
+    "\n"
+    "        float2 centered = bboxLocal - bboxSize * 0.5;\n"
+    "        float2 invRot = float2(\n"
+    "            centered.x * random_cos + centered.y * random_sin,\n"
+    "           -centered.x * random_sin + centered.y * random_cos\n"
+    "        );\n"
+    "\n"
+    "        float2 targetSize = max(float2(random_scale, random_target_h), float2(1.0, 1.0));\n"
+    "        float2 img = invRot + targetSize * 0.5;\n"
+    "        sampleUv = img / targetSize;\n"
+    "        if (sampleUv.x < 0.0 || sampleUv.x > 1.0 || sampleUv.y < 0.0 || sampleUv.y > 1.0) {\n"
+    "            return src;\n"
+    "        }\n"
+    "    }\n"
+    "\n"
+    "    sampleUv = clamp(sampleUv, 0.0, 1.0);\n"
+    "    float4 mask = imageMaskTexture.Sample(samplerState, sampleUv);\n"
+    "    float a = saturate(mask.a);\n"
+    "    float3 outRgb = src.rgb * (1.0 - a) + mask.rgb * a;\n"
+    "    return float4(outRgb, src.a);\n"
+    "}\n";
+
+// ============================================================
 // NV12 → BGRA 変換シェーダー（GPUゼロコピー）
 // BT.601 Limited Range（FFmpeg D3D11VAデコード標準）
 // 注意: 一部D3D11VAドライバーはVU順(CrCb)で返すためUV入れ替え対応
@@ -450,7 +541,9 @@ MaskShader::MaskShader()
       rectfill_constant_buffer_(nullptr),
       copyright_pixel_shader_(nullptr),
       copyright_constant_buffer_(nullptr),
-      composite_pixel_shader_(nullptr) {
+      composite_pixel_shader_(nullptr),
+      image_mask_pixel_shader_(nullptr),
+      image_mask_constant_buffer_(nullptr) {
 }
 
 MaskShader::~MaskShader() {
@@ -475,6 +568,8 @@ void MaskShader::Release() {
     copyright_pixel_shader_.Reset();
     copyright_constant_buffer_.Reset();
     composite_pixel_shader_.Reset();
+    image_mask_pixel_shader_.Reset();
+    image_mask_constant_buffer_.Reset();
     nv12_to_bgra_pixel_shader_.Reset();
     bgra_to_nv12_y_pixel_shader_.Reset();
     bgra_to_nv12_uv_pixel_shader_.Reset();
@@ -706,6 +801,22 @@ bool MaskShader::Initialize(ID3D11Device* device) {
     }
     MaskLogToFile("[MaskShader] Composite PS OK\n");
 
+    // --- 画像マスクシェーダー ---
+    MaskLogToFile("[MaskShader] Compiling image-mask shader...\n");
+    hr = CompileShaderSource(image_mask_pixel_shader_src, "main", "ps_4_0", blob);
+    if (FAILED(hr) || !blob) {
+        MaskLogFmt("[MaskShader] FAIL: compile image-mask PS HR=0x%08X\n", (unsigned)hr);
+        return false;
+    }
+    hr = device->CreatePixelShader(
+        blob->GetBufferPointer(), blob->GetBufferSize(),
+        nullptr, image_mask_pixel_shader_.ReleaseAndGetAddressOf());
+    if (FAILED(hr) || !image_mask_pixel_shader_.Get()) {
+        MaskLogFmt("[MaskShader] FAIL: CreatePixelShader(image-mask) HR=0x%08X\n", (unsigned)hr);
+        return false;
+    }
+    MaskLogToFile("[MaskShader] Image-mask PS OK\n");
+
     // --- NV12→BGRA変換シェーダー ---
     MaskLogToFile("[MaskShader] Compiling NV12→BGRA shader...\n");
     hr = CompileShaderSource(nv12_to_bgra_pixel_shader_src, "main", "ps_4_0", blob);
@@ -765,6 +876,12 @@ bool MaskShader::Initialize(ID3D11Device* device) {
     buffer_desc.ByteWidth = sizeof(CopyrightConstantBuffer);
     buffer_desc.ByteWidth = ((buffer_desc.ByteWidth + 15) & ~15);
     hr = device->CreateBuffer(&buffer_desc, nullptr, copyright_constant_buffer_.ReleaseAndGetAddressOf());
+
+    // --- 画像マスク定数バッファ ---
+    if (image_mask_constant_buffer_.Get()) image_mask_constant_buffer_.Reset();
+    buffer_desc.ByteWidth = sizeof(ImageMaskConstantBuffer);
+    buffer_desc.ByteWidth = ((buffer_desc.ByteWidth + 15) & ~15);
+    hr = device->CreateBuffer(&buffer_desc, nullptr, image_mask_constant_buffer_.ReleaseAndGetAddressOf());
 
     MaskLogToFile("[MaskShader] Initialize complete OK\n");
     return true;
@@ -1717,6 +1834,310 @@ bool MaskShader::ApplyRectBlur(
     }
 
     output = temp_output;
+    return true;
+}
+
+bool MaskShader::ApplyImageMask(
+    ID3D11Texture2D* source,
+    ID3D11ShaderResourceView* image_mask_srv,
+    const std::vector<Detection>& detections,
+    int image_mode,
+    float random_min_scale,
+    float random_max_scale,
+    bool random_allow_overflow,
+    int64_t random_layout_seed,
+    Microsoft::WRL::ComPtr<ID3D11Texture2D>& output) {
+
+    if (!source || !image_mask_srv) {
+        return false;
+    }
+
+    if (detections.empty()) {
+        output = source;
+        return true;
+    }
+
+    ID3D11Device* device = nullptr;
+    image_mask_pixel_shader_.Get()->GetDevice(&device);
+    if (!device) {
+        return false;
+    }
+
+    ID3D11DeviceContext* context = nullptr;
+    device->GetImmediateContext(&context);
+    if (!context) {
+        return false;
+    }
+
+    D3D11_TEXTURE2D_DESC source_desc = {};
+    source->GetDesc(&source_desc);
+
+    D3D11_TEXTURE2D_DESC out_desc = source_desc;
+    out_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+    out_desc.CPUAccessFlags = 0;
+    out_desc.MiscFlags = 0;
+
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> tex_a;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> tex_b;
+    if (FAILED(device->CreateTexture2D(&out_desc, nullptr, tex_a.ReleaseAndGetAddressOf())) || !tex_a.Get()) {
+        return false;
+    }
+    if (FAILED(device->CreateTexture2D(&out_desc, nullptr, tex_b.ReleaseAndGetAddressOf())) || !tex_b.Get()) {
+        return false;
+    }
+
+    context->CopyResource(tex_a.Get(), source);
+
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv_a;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv_b;
+    Microsoft::WRL::ComPtr<ID3D11RenderTargetView> rtv_a;
+    Microsoft::WRL::ComPtr<ID3D11RenderTargetView> rtv_b;
+    if (FAILED(device->CreateShaderResourceView(tex_a.Get(), nullptr, srv_a.ReleaseAndGetAddressOf())) || !srv_a.Get()) {
+        return false;
+    }
+    if (FAILED(device->CreateShaderResourceView(tex_b.Get(), nullptr, srv_b.ReleaseAndGetAddressOf())) || !srv_b.Get()) {
+        return false;
+    }
+    if (FAILED(device->CreateRenderTargetView(tex_a.Get(), nullptr, rtv_a.ReleaseAndGetAddressOf())) || !rtv_a.Get()) {
+        return false;
+    }
+    if (FAILED(device->CreateRenderTargetView(tex_b.Get(), nullptr, rtv_b.ReleaseAndGetAddressOf())) || !rtv_b.Get()) {
+        return false;
+    }
+
+    D3D11_SHADER_RESOURCE_VIEW_DESC image_srv_desc = {};
+    image_mask_srv->GetDesc(&image_srv_desc);
+    float image_w = 1.0f;
+    float image_h = 1.0f;
+    if (image_srv_desc.ViewDimension == D3D11_SRV_DIMENSION_TEXTURE2D) {
+        Microsoft::WRL::ComPtr<ID3D11Resource> image_res;
+        image_mask_srv->GetResource(image_res.ReleaseAndGetAddressOf());
+        Microsoft::WRL::ComPtr<ID3D11Texture2D> image_tex;
+        if (image_res && SUCCEEDED(image_res.As(&image_tex)) && image_tex.Get()) {
+            D3D11_TEXTURE2D_DESC image_desc = {};
+            image_tex->GetDesc(&image_desc);
+            image_w = static_cast<float>((std::max)(1u, image_desc.Width));
+            image_h = static_cast<float>((std::max)(1u, image_desc.Height));
+        }
+    }
+
+    Microsoft::WRL::ComPtr<ID3D11Buffer> quad;
+    if (!CreateFullScreenQuad(quad) || !quad.Get()) {
+        return false;
+    }
+
+    D3D11_VIEWPORT viewport = {};
+    viewport.Width = static_cast<float>(source_desc.Width);
+    viewport.Height = static_cast<float>(source_desc.Height);
+    viewport.MaxDepth = 1.0f;
+    context->RSSetViewports(1, &viewport);
+    context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+    UINT stride = sizeof(float) * 4;
+    UINT offset = 0;
+    context->IASetVertexBuffers(0, 1, quad.GetAddressOf(), &stride, &offset);
+    context->IASetInputLayout(mask_input_layout_.Get());
+    context->VSSetShader(mask_vertex_shader_.Get(), nullptr, 0);
+    context->PSSetShader(image_mask_pixel_shader_.Get(), nullptr, 0);
+    context->PSSetSamplers(0, 1, linear_sampler_.GetAddressOf());
+
+    auto clampf = [](float v, float lo, float hi) {
+        return (std::max)(lo, (std::min)(v, hi));
+    };
+
+    auto drawWithConstants = [&](const ImageMaskConstantBuffer& cb) {
+        D3D11_MAPPED_SUBRESOURCE mapped = {};
+        HRESULT hr = context->Map(image_mask_constant_buffer_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+        if (FAILED(hr)) {
+            return false;
+        }
+        memcpy(mapped.pData, &cb, sizeof(cb));
+        context->Unmap(image_mask_constant_buffer_.Get(), 0);
+
+        context->OMSetRenderTargets(1, rtv_b.GetAddressOf(), nullptr);
+        ID3D11ShaderResourceView* srvs[2] = { srv_a.Get(), image_mask_srv };
+        context->PSSetShaderResources(0, 2, srvs);
+        context->PSSetConstantBuffers(0, 1, image_mask_constant_buffer_.GetAddressOf());
+        context->VSSetConstantBuffers(0, 1, image_mask_constant_buffer_.GetAddressOf());
+        context->Draw(4, 0);
+
+        ID3D11ShaderResourceView* null_srvs[2] = { nullptr, nullptr };
+        context->PSSetShaderResources(0, 2, null_srvs);
+
+        std::swap(tex_a, tex_b);
+        std::swap(srv_a, srv_b);
+        std::swap(rtv_a, rtv_b);
+        return true;
+    };
+
+    auto mixSeed = [](uint64_t x) {
+        x ^= x >> 33;
+        x *= 0xff51afd7ed558ccdULL;
+        x ^= x >> 33;
+        x *= 0xc4ceb9fe1a85ec53ULL;
+        x ^= x >> 33;
+        return x;
+    };
+
+    int mode = std::clamp(image_mode, 0, 3);
+    const int frame_w = static_cast<int>(source_desc.Width);
+    const int frame_h = static_cast<int>(source_desc.Height);
+
+    for (const auto& d : detections) {
+        float x1f = clampf((std::min)(d.x1, d.x2), 0.0f, static_cast<float>(frame_w));
+        float y1f = clampf((std::min)(d.y1, d.y2), 0.0f, static_cast<float>(frame_h));
+        float x2f = clampf((std::max)(d.x1, d.x2), 0.0f, static_cast<float>(frame_w));
+        float y2f = clampf((std::max)(d.y1, d.y2), 0.0f, static_cast<float>(frame_h));
+
+        int roi_x = static_cast<int>(std::round(x1f));
+        int roi_y = static_cast<int>(std::round(y1f));
+        int roi_w = static_cast<int>(std::round(x2f - x1f));
+        int roi_h = static_cast<int>(std::round(y2f - y1f));
+        if (roi_w <= 0 || roi_h <= 0) {
+            continue;
+        }
+
+        if (mode != 3) {
+            ImageMaskConstantBuffer cb{};
+            cb.roi_x = static_cast<float>(roi_x);
+            cb.roi_y = static_cast<float>(roi_y);
+            cb.roi_w = static_cast<float>(roi_w);
+            cb.roi_h = static_cast<float>(roi_h);
+            cb.texture_width = static_cast<float>(frame_w);
+            cb.texture_height = static_cast<float>(frame_h);
+            cb.image_width = image_w;
+            cb.image_height = image_h;
+            cb.image_mode = static_cast<uint32_t>(mode);
+            cb.random_allow_overflow = random_allow_overflow ? 1u : 0u;
+            cb.random_scale = image_w;
+            cb.random_target_h = image_h;
+            cb.random_sin = 0.0f;
+            cb.random_cos = 1.0f;
+            cb.random_offset_x = 0.0f;
+            cb.random_offset_y = 0.0f;
+
+            if (mode == 0) {
+                cb.tile_width = static_cast<float>(roi_w);
+                cb.tile_height = static_cast<float>(roi_h);
+            } else if (mode == 1) {
+                cb.tile_height = static_cast<float>(roi_h);
+                cb.tile_width = (std::max)(1.0f, std::round((image_w * cb.tile_height) / (std::max)(1.0f, image_h)));
+            } else {
+                float tile_h = image_h;
+                float tile_w = image_w;
+                if (image_h > static_cast<float>(roi_h)) {
+                    tile_h = static_cast<float>(roi_h);
+                    tile_w = (std::max)(1.0f, std::round((image_w * tile_h) / (std::max)(1.0f, image_h)));
+                }
+                cb.tile_width = tile_w;
+                cb.tile_height = tile_h;
+            }
+
+            drawWithConstants(cb);
+            continue;
+        }
+
+        uint64_t seed = static_cast<uint64_t>(random_layout_seed);
+        seed ^= static_cast<uint64_t>(static_cast<uint32_t>(roi_w)) << 1;
+        seed ^= static_cast<uint64_t>(static_cast<uint32_t>(roi_h)) << 17;
+        seed ^= static_cast<uint64_t>(static_cast<uint32_t>(roi_x / 8)) << 33;
+        seed ^= static_cast<uint64_t>(static_cast<uint32_t>(roi_y / 8)) << 49;
+        if (random_allow_overflow) {
+            seed ^= 0x9e3779b97f4a7c15ULL;
+        }
+
+        std::mt19937 random_engine(static_cast<uint32_t>(mixSeed(seed) & 0xffffffffULL));
+        float min_scale = (std::max)(0.01f, random_min_scale);
+        float max_scale = (std::max)(min_scale, random_max_scale);
+        std::uniform_real_distribution<float> random_scale_dist(min_scale, max_scale);
+        std::uniform_real_distribution<float> random_angle_dist(0.0f, 6.28318530718f);
+
+        std::vector<uint8_t> covered(static_cast<size_t>(roi_w) * static_cast<size_t>(roi_h), 0);
+        size_t covered_count = 0;
+        const size_t covered_total = covered.size();
+        const int max_placements = 256;
+
+        for (int placement = 0; placement < max_placements; ++placement) {
+            if (covered_total > 0 && static_cast<double>(covered_count) / static_cast<double>(covered_total) >= 0.98) {
+                break;
+            }
+
+            float scale = random_scale_dist(random_engine);
+            int target_h = (std::max)(1, static_cast<int>(std::round(static_cast<float>(roi_h) * scale)));
+            int target_w = (std::max)(1, static_cast<int>(std::round((image_w * static_cast<float>(target_h)) / (std::max)(1.0f, image_h))));
+
+            float angle = random_angle_dist(random_engine);
+            float sinv = std::sin(angle);
+            float cosv = std::cos(angle);
+            int bbox_w = (std::max)(1, static_cast<int>(std::round(std::abs(cosv) * target_w + std::abs(sinv) * target_h)));
+            int bbox_h = (std::max)(1, static_cast<int>(std::round(std::abs(sinv) * target_w + std::abs(cosv) * target_h)));
+
+            int min_rel_x = random_allow_overflow ? (-bbox_w + 1) : 0;
+            int max_rel_x = random_allow_overflow ? (roi_w - 1) : (std::max)(0, roi_w - bbox_w);
+            int min_rel_y = random_allow_overflow ? (-bbox_h + 1) : 0;
+            int max_rel_y = random_allow_overflow ? (roi_h - 1) : (std::max)(0, roi_h - bbox_h);
+
+            std::uniform_int_distribution<int> x_dist(min_rel_x, max_rel_x);
+            std::uniform_int_distribution<int> y_dist(min_rel_y, max_rel_y);
+            int rel_x = x_dist(random_engine);
+            int rel_y = y_dist(random_engine);
+
+            int dst_x = roi_x + rel_x;
+            int dst_y = roi_y + rel_y;
+            int clip_x1 = random_allow_overflow ? 0 : roi_x;
+            int clip_y1 = random_allow_overflow ? 0 : roi_y;
+            int clip_x2 = random_allow_overflow ? frame_w : (roi_x + roi_w);
+            int clip_y2 = random_allow_overflow ? frame_h : (roi_y + roi_h);
+
+            int clipped_x1 = (std::max)(dst_x, clip_x1);
+            int clipped_y1 = (std::max)(dst_y, clip_y1);
+            int clipped_x2 = (std::min)(dst_x + bbox_w, clip_x2);
+            int clipped_y2 = (std::min)(dst_y + bbox_h, clip_y2);
+            if (clipped_x2 <= clipped_x1 || clipped_y2 <= clipped_y1) {
+                continue;
+            }
+
+            ImageMaskConstantBuffer cb{};
+            cb.roi_x = static_cast<float>(clipped_x1);
+            cb.roi_y = static_cast<float>(clipped_y1);
+            cb.roi_w = static_cast<float>(clipped_x2 - clipped_x1);
+            cb.roi_h = static_cast<float>(clipped_y2 - clipped_y1);
+            cb.texture_width = static_cast<float>(frame_w);
+            cb.texture_height = static_cast<float>(frame_h);
+            cb.image_width = image_w;
+            cb.image_height = image_h;
+            cb.tile_width = static_cast<float>(bbox_w);
+            cb.tile_height = static_cast<float>(bbox_h);
+            cb.random_offset_x = static_cast<float>(dst_x);
+            cb.random_offset_y = static_cast<float>(dst_y);
+            cb.random_scale = static_cast<float>(target_w);
+            cb.random_target_h = static_cast<float>(target_h);
+            cb.random_sin = sinv;
+            cb.random_cos = cosv;
+            cb.image_mode = 3u;
+            cb.random_allow_overflow = random_allow_overflow ? 1u : 0u;
+
+            drawWithConstants(cb);
+
+            int cov_x1 = (std::max)(clipped_x1, roi_x);
+            int cov_y1 = (std::max)(clipped_y1, roi_y);
+            int cov_x2 = (std::min)(clipped_x2, roi_x + roi_w);
+            int cov_y2 = (std::min)(clipped_y2, roi_y + roi_h);
+            if (cov_x2 > cov_x1 && cov_y2 > cov_y1) {
+                for (int yy = cov_y1; yy < cov_y2; ++yy) {
+                    size_t row = static_cast<size_t>(yy - roi_y) * static_cast<size_t>(roi_w);
+                    for (int xx = cov_x1; xx < cov_x2; ++xx) {
+                        size_t idx = row + static_cast<size_t>(xx - roi_x);
+                        if (covered[idx] == 0) {
+                            covered[idx] = 1;
+                            covered_count++;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    output = tex_a;
     return true;
 }
 

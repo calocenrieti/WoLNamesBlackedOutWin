@@ -149,6 +149,7 @@ private:
 
     // 透かし画像を初回のみロード
     bool EnsureCopyrightWatermarkLoaded(const std::wstring& override_path = L"");
+    bool EnsureBlackedOutImageMaskLoaded(const std::wstring& override_path = L"");
 
     // 静止画用テクスチャをRGBAに変換
     bool ConvertImageToRgbaTexture(ID3D11Texture2D* source_texture, uint32_t width, uint32_t height, Microsoft::WRL::ComPtr<ID3D11Texture2D>& out_rgba_texture);
@@ -178,6 +179,9 @@ private:
     cv::Mat cached_cpu_frame_bgra_;
     cv::Mat cached_cpu_preview_output_;
     cv::Mat cached_watermark_bgra_;
+    cv::Mat cached_blackedout_image_bgra_;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> cached_blackedout_image_texture_;
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> cached_blackedout_image_srv_;
 
     // ファイル情報
     bool is_video_;
@@ -216,6 +220,8 @@ private:
     uint32_t copyright_width_;
     uint32_t copyright_height_;
     std::wstring copyright_image_path_override_;
+    std::wstring blackedout_image_path_loaded_;
+    int64_t random_layout_time_bucket_ = -1;
 
     // 作業用テクスチャ
     Microsoft::WRL::ComPtr<ID3D11Texture2D> rgba_texture_;

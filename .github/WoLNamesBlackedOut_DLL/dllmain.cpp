@@ -72,6 +72,7 @@ static WoLNamesBlackedOut::Core::MaskType MaskTypeFromString(const char* typeStr
     if (s == "Inpaint")       return WoLNamesBlackedOut::Core::MaskType::Inpaint;
     if (s == "Mosaic")        return WoLNamesBlackedOut::Core::MaskType::Mosaic;
     if (s == "Blur")          return WoLNamesBlackedOut::Core::MaskType::Blur;
+    if (s == "Image")         return WoLNamesBlackedOut::Core::MaskType::Image;
     if (s == "NoInference")   return WoLNamesBlackedOut::Core::MaskType::No_Inference;
     if (s == "No_Inference")  return WoLNamesBlackedOut::Core::MaskType::No_Inference;
     return WoLNamesBlackedOut::Core::MaskType::RectFill;
@@ -83,9 +84,33 @@ static WoLNamesBlackedOut::Core::MaskType MaskTypeFromInt(int value) {
         case 1: return WoLNamesBlackedOut::Core::MaskType::Mosaic;
         case 2: return WoLNamesBlackedOut::Core::MaskType::Blur;
         case 4: return WoLNamesBlackedOut::Core::MaskType::No_Inference;
+        case 5: return WoLNamesBlackedOut::Core::MaskType::Image;
         case 3:
         default:
             return WoLNamesBlackedOut::Core::MaskType::RectFill;
+    }
+}
+
+static int NormalizeImageModeFromInterop(int value) {
+    switch (value) {
+        case 0:
+        case 1:
+        case 2:
+        case 3:
+            return value;
+        default:
+            return 0;
+    }
+}
+
+static int NormalizeFixedImageModeFromInterop(int value) {
+    switch (value) {
+        case 0:
+        case 1:
+        case 2:
+            return value;
+        default:
+            return 0;
     }
 }
 
@@ -142,6 +167,18 @@ extern "C" __declspec(dllexport) int __stdcall ProcessVideo(
     int ocr_max_rois_per_frame,
     float text_similarity_threshold,
     const char* mask_exclude_text_csv,
+    int blacked_image_mode,
+    const char* blacked_image_path,
+    float blacked_image_random_min_scale,
+    float blacked_image_random_max_scale,
+    int blacked_image_random_interval_frames,
+    bool blacked_image_random_allow_overflow,
+    int fixed_image_mode,
+    const char* fixed_image_path,
+    float fixed_image_random_min_scale,
+    float fixed_image_random_max_scale,
+    int fixed_image_random_interval_frames,
+    bool fixed_image_random_allow_overflow,
     const char* bitrate,
     const char* preset,
     bool disable_audio,
@@ -175,6 +212,8 @@ extern "C" __declspec(dllexport) int __stdcall ProcessVideo(
     std::wstring winput  = toWide(input_video_path);
     std::wstring woutput = toWide(output_video_path);
     std::wstring wcopyrightCustom = toWide(copyright_image_path);
+    std::wstring wblackedImagePath = toWide(blacked_image_path);
+    std::wstring wfixedImagePath = toWide(fixed_image_path);
     std::wstring wexcludeCsv = toWide(mask_exclude_text_csv);
 
     // モデルパス（実行ディレクトリのONNXモデル）
@@ -246,10 +285,25 @@ extern "C" __declspec(dllexport) int __stdcall ProcessVideo(
     config.trim_end_seconds = trim_end_seconds;
     config.blacked_type    = MaskTypeFromInt(blackedOut);
     config.blackedout_param = blackedout_param;
+    config.blacked_image_mode = NormalizeImageModeFromInterop(blacked_image_mode);
+    config.blacked_image_path = wblackedImagePath.c_str();
+    config.blacked_image_random_min_scale = std::clamp(blacked_image_random_min_scale, 0.3f, 1.0f);
+    config.blacked_image_random_max_scale = std::clamp(blacked_image_random_max_scale, 1.0f, 5.0f);
+    if (config.blacked_image_random_max_scale < config.blacked_image_random_min_scale) {
+        std::swap(config.blacked_image_random_min_scale, config.blacked_image_random_max_scale);
+    }
+    config.blacked_image_random_interval_frames = std::clamp(blacked_image_random_interval_frames, 1, 600);
+    config.blacked_image_random_allow_overflow = blacked_image_random_allow_overflow;
     config.name_color      = name_color;
     config.fixframe_color  = fixframe_color;
     config.fixmask_type    = MaskTypeFromInt(fixedFrame);
     config.fixmask_param   = fixedFrame_param;
+    config.fixed_image_mode = NormalizeFixedImageModeFromInterop(fixed_image_mode);
+    config.fixed_image_path = wfixedImagePath.c_str();
+    config.fixed_image_random_min_scale = 0.75f;
+    config.fixed_image_random_max_scale = 2.0f;
+    config.fixed_image_random_interval_frames = 90;
+    config.fixed_image_random_allow_overflow = false;
     // copyright 位置・拡大率を出力設定へ受け渡し
     config.copyright_offset_x = copyright_offset_x;
     config.copyright_offset_y = copyright_offset_y;

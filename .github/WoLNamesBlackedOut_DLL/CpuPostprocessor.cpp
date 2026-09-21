@@ -1,9 +1,187 @@
 #include "pch.h"
 #include "CpuPostprocessor.h"
 #include <algorithm>
+#include <cstdint>
 #include <cmath>
+#include <random>
 
 namespace WoLNamesBlackedOut::Core {
+
+namespace {
+cv::Rect ToSafeRect(const Detection& d, int maxWidth, int maxHeight) {
+    int x = static_cast<int>(std::round(d.x1));
+    int y = static_cast<int>(std::round(d.y1));
+    int w = static_cast<int>(std::round(d.x2 - d.x1));
+    int h = static_cast<int>(std::round(d.y2 - d.y1));
+    return cv::Rect(x, y, w, h) & cv::Rect(0, 0, maxWidth, maxHeight);
+}
+
+void AlphaBlendImage(cv::Mat& destBgra, const cv::Mat& srcBgra, const cv::Rect& destRect) {
+    if (destRect.width <= 0 || destRect.height <= 0) return;
+    cv::Mat roi = destBgra(destRect);
+
+    for (int y = 0; y < destRect.height; ++y) {
+        const uint8_t* src = srcBgra.ptr<uint8_t>(y);
+        uint8_t* dst = roi.ptr<uint8_t>(y);
+        for (int x = 0; x < destRect.width; ++x) {
+            float alpha = static_cast<float>(src[x * 4 + 3]) / 255.0f;
+            if (alpha <= 0.0f) continue;
+            float invAlpha = 1.0f - alpha;
+            dst[x * 4 + 0] = static_cast<uint8_t>(dst[x * 4 + 0] * invAlpha + src[x * 4 + 0] * alpha);
+            dst[x * 4 + 1] = static_cast<uint8_t>(dst[x * 4 + 1] * invAlpha + src[x * 4 + 1] * alpha);
+            dst[x * 4 + 2] = static_cast<uint8_t>(dst[x * 4 + 2] * invAlpha + src[x * 4 + 2] * alpha);
+        }
+    }
+}
+
+void ApplyImageFit(cv::Mat& frame, const cv::Rect& roi, const cv::Mat& imageBgra) {
+    cv::Mat resized;
+    cv::resize(imageBgra, resized, roi.size(), 0, 0, cv::INTER_LINEAR);
+    AlphaBlendImage(frame, resized, roi);
+}
+
+void ApplyImageTile1(cv::Mat& frame, const cv::Rect& roi, const cv::Mat& imageBgra) {
+    if (roi.width <= 0 || roi.height <= 0) return;
+    int tileH = roi.height;
+    int tileW = static_cast<int>(std::round(static_cast<double>(imageBgra.cols) * tileH / std::max(1, imageBgra.rows)));
+    tileW = (std::max)(1, tileW);
+
+    cv::Mat tile;
+    cv::resize(imageBgra, tile, cv::Size(tileW, tileH), 0, 0, cv::INTER_LINEAR);
+
+    int x = roi.x;
+    int right = roi.x + roi.width;
+    while (x < right) {
+        int drawW = (std::min)(tileW, right - x);
+        cv::Rect srcRect(0, 0, drawW, tileH);
+        cv::Rect dstRect(x, roi.y, drawW, tileH);
+        cv::Mat croppedTile = tile(srcRect);
+        AlphaBlendImage(frame, croppedTile, dstRect);
+        x += drawW;
+    }
+}
+
+void ApplyImageTile2(cv::Mat& frame, const cv::Rect& roi, const cv::Mat& imageBgra) {
+    if (roi.width <= 0 || roi.height <= 0 || imageBgra.cols <= 0 || imageBgra.rows <= 0) {
+        return;
+    }
+
+    cv::Mat scaledTile;
+    const cv::Mat* tileSource = &imageBgra;
+    if (imageBgra.rows > roi.height) {
+        int scaledH = roi.height;
+        int scaledW = static_cast<int>(std::round(static_cast<double>(imageBgra.cols) * scaledH / std::max(1, imageBgra.rows)));
+        scaledW = (std::max)(1, scaledW);
+        cv::resize(imageBgra, scaledTile, cv::Size(scaledW, scaledH), 0, 0, cv::INTER_LINEAR);
+        tileSource = &scaledTile;
+    }
+
+    const int tileW = tileSource->cols;
+    const int tileH = tileSource->rows;
+    int y = roi.y;
+    const int bottom = roi.y + roi.height;
+
+    while (y < bottom) {
+        int drawH = (std::min)(tileH, bottom - y);
+        int x = roi.x;
+        const int right = roi.x + roi.width;
+        while (x < right) {
+            int drawW = (std::min)(tileW, right - x);
+            cv::Rect srcRect(0, 0, drawW, drawH);
+            cv::Rect dstRect(x, y, drawW, drawH);
+            cv::Mat croppedTile = (*tileSource)(srcRect);
+            AlphaBlendImage(frame, croppedTile, dstRect);
+            x += drawW;
+        }
+
+        y += drawH;
+    }
+}
+
+uint64_t MixSeed(uint64_t x) {
+    x ^= x >> 33;
+    x *= 0xff51afd7ed558ccdULL;
+    x ^= x >> 33;
+    x *= 0xc4ceb9fe1a85ec53ULL;
+    x ^= x >> 33;
+    return x;
+}
+
+void ApplyImageRandom(cv::Mat& frame, const cv::Rect& roi, const cv::Mat& imageBgra, float minScale, float maxScale, bool allowOverflow, int64_t randomLayoutSeed) {
+    if (roi.width <= 0 || roi.height <= 0) return;
+    cv::Mat covered = cv::Mat::zeros(roi.height, roi.width, CV_8UC1);
+
+    uint64_t seed = static_cast<uint64_t>(randomLayoutSeed);
+    seed ^= static_cast<uint64_t>(static_cast<uint32_t>(roi.width)) << 1;
+    seed ^= static_cast<uint64_t>(static_cast<uint32_t>(roi.height)) << 17;
+    seed ^= static_cast<uint64_t>(static_cast<uint32_t>(roi.x / 8)) << 33;
+    seed ^= static_cast<uint64_t>(static_cast<uint32_t>(roi.y / 8)) << 49;
+    if (allowOverflow) {
+        seed ^= 0x9e3779b97f4a7c15ULL;
+    }
+    std::mt19937 rng(static_cast<uint32_t>(MixSeed(seed) & 0xffffffffULL));
+    std::uniform_real_distribution<float> scaleDist(minScale, maxScale);
+    std::uniform_real_distribution<float> angleDist(0.0f, 360.0f);
+    const cv::Rect frameRect(0, 0, frame.cols, frame.rows);
+
+    const int maxPlacements = 256;
+    int placements = 0;
+    while (placements < maxPlacements) {
+        double coveredRatio = static_cast<double>(cv::countNonZero(covered)) / static_cast<double>(covered.total());
+        if (coveredRatio >= 0.98) {
+            break;
+        }
+
+        float scale = scaleDist(rng);
+        int targetH = (std::max)(1, static_cast<int>(std::round(roi.height * scale)));
+        int targetW = (std::max)(1, static_cast<int>(std::round(static_cast<double>(imageBgra.cols) * targetH / std::max(1, imageBgra.rows))));
+
+        cv::Mat resized;
+        cv::resize(imageBgra, resized, cv::Size(targetW, targetH), 0, 0, cv::INTER_LINEAR);
+
+        cv::Point2f center(static_cast<float>(targetW) * 0.5f, static_cast<float>(targetH) * 0.5f);
+        float angle = angleDist(rng);
+        cv::Mat rot = cv::getRotationMatrix2D(center, angle, 1.0);
+        cv::Rect bbox = cv::RotatedRect(center, resized.size(), angle).boundingRect();
+        rot.at<double>(0, 2) += bbox.width * 0.5 - center.x;
+        rot.at<double>(1, 2) += bbox.height * 0.5 - center.y;
+
+        cv::Mat rotated;
+        cv::warpAffine(resized, rotated, rot, bbox.size(), cv::INTER_LINEAR, cv::BORDER_TRANSPARENT);
+        if (rotated.empty()) {
+            break;
+        }
+
+        const int minRelX = allowOverflow ? (-rotated.cols + 1) : 0;
+        const int maxRelX = allowOverflow ? (roi.width - 1) : (std::max)(0, roi.width - rotated.cols);
+        const int minRelY = allowOverflow ? (-rotated.rows + 1) : 0;
+        const int maxRelY = allowOverflow ? (roi.height - 1) : (std::max)(0, roi.height - rotated.rows);
+        std::uniform_int_distribution<int> xDist(minRelX, maxRelX);
+        std::uniform_int_distribution<int> yDist(minRelY, maxRelY);
+
+        int relX = xDist(rng);
+        int relY = yDist(rng);
+        cv::Rect dstRect(roi.x + relX, roi.y + relY, rotated.cols, rotated.rows);
+        cv::Rect clipTarget = allowOverflow ? frameRect : roi;
+        cv::Rect clipped = dstRect & clipTarget;
+        if (clipped.width <= 0 || clipped.height <= 0) {
+            placements++;
+            continue;
+        }
+
+        cv::Rect srcRect(clipped.x - dstRect.x, clipped.y - dstRect.y, clipped.width, clipped.height);
+        cv::Mat cropped = rotated(srcRect);
+        AlphaBlendImage(frame, cropped, clipped);
+
+        cv::Rect coveredGlobal = clipped & roi;
+        if (coveredGlobal.width > 0 && coveredGlobal.height > 0) {
+            cv::Rect coveredRect(coveredGlobal.x - roi.x, coveredGlobal.y - roi.y, coveredGlobal.width, coveredGlobal.height);
+            cv::rectangle(covered, coveredRect, cv::Scalar(255), cv::FILLED);
+        }
+        placements++;
+    }
+}
+} // namespace
 
 CpuPostprocessor::CpuPostprocessor() = default;
 CpuPostprocessor::~CpuPostprocessor() = default;
@@ -88,6 +266,50 @@ std::vector<Detection> CpuPostprocessor::Process(
     }
 
     return detections;
+}
+
+void CpuPostprocessor::ApplyImageMask(
+    cv::Mat& frame,
+    const std::vector<Detection>& detections,
+    const cv::Mat& image_bgra,
+    int image_mode,
+    float random_min_scale,
+    float random_max_scale,
+    bool random_allow_overflow,
+    int64_t random_layout_seed
+) {
+    if (frame.empty() || detections.empty() || image_bgra.empty() || image_bgra.channels() != 4) {
+        return;
+    }
+
+    float minScale = (std::clamp)(random_min_scale, 0.3f, 1.0f);
+    float maxScale = (std::clamp)(random_max_scale, 1.0f, 5.0f);
+    if (maxScale < minScale) {
+        std::swap(minScale, maxScale);
+    }
+
+    for (const auto& d : detections) {
+        cv::Rect roi = ToSafeRect(d, frame.cols, frame.rows);
+        if (roi.width <= 0 || roi.height <= 0) {
+            continue;
+        }
+
+        switch (image_mode) {
+            case 1:
+                ApplyImageTile1(frame, roi, image_bgra);
+                break;
+            case 2:
+                ApplyImageTile2(frame, roi, image_bgra);
+                break;
+            case 3:
+                ApplyImageRandom(frame, roi, image_bgra, minScale, maxScale, random_allow_overflow, random_layout_seed);
+                break;
+            case 0:
+            default:
+                ApplyImageFit(frame, roi, image_bgra);
+                break;
+        }
+    }
 }
 
 void CpuPostprocessor::ApplyMosaic(cv::Mat& frame, const cv::Rect& roi, int factor) {

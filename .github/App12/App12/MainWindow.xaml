@@ -106,6 +106,7 @@
                                         <ComboBoxItem Content="Mosaic" />
                                         <ComboBoxItem Content="Blur" />
                                         <ComboBoxItem Content="Inpaint" />
+                                         <ComboBoxItem Content="Image" />
                                         <ComboBoxItem Content="No_Inference" />
                                     </ComboBox>
                                 </StackPanel>
@@ -117,6 +118,14 @@
                                         </StackPanel>
                                     </Button>
                                 </StackPanel>
+                                 <StackPanel HorizontalAlignment="Center">
+                                     <Button x:Uid="BlackedOutImageSettingsButton" x:Name="BlackedOutImageSettingsButton" Click="BlackedOutImageSettingsButton_Click" Margin="4" Visibility="Collapsed" Width="200">
+                                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                             <FontIcon Glyph="&#xE7C5;" />
+                                             <TextBlock x:Uid="BlackedOutImageSettingsText" Text=" Image Settings" VerticalAlignment="Center" Margin="4,0,0,0"/>
+                                         </StackPanel>
+                                     </Button>
+                                 </StackPanel>
                                 <Slider x:Name="BlackedOutSlideBar" Value="3" Minimum="1" Maximum="5" Width="200" HorizontalAlignment="Center" Margin="4" Visibility="Collapsed"/>
                             </StackPanel>
 
@@ -127,6 +136,7 @@
                                         <ComboBoxItem Content="Solid" />
                                         <ComboBoxItem Content="Mosaic" />
                                         <ComboBoxItem Content="Blur" />
+                                        <ComboBoxItem Content="Image" />
                                     </ComboBox>
                                 </StackPanel>
                                 <StackPanel  HorizontalAlignment="Center" >
@@ -134,6 +144,14 @@
                                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
                                             <FontIcon x:Name="FixedFrame_color_icon" Glyph="&#xF354;" Foreground="Black" />
                                             <TextBlock x:Uid="FixedFrameColorText" Text=" FixedFrame_color" VerticalAlignment="Center"  Margin="4,0,0,0"/>
+                                        </StackPanel>
+                                    </Button>
+                                </StackPanel>
+                                <StackPanel HorizontalAlignment="Center">
+                                    <Button x:Uid="FixedFrameImageSettingsButton" x:Name="FixedFrameImageSettingsButton" Click="FixedFrameImageSettingsButton_Click" Margin="4" Visibility="Collapsed" Width="200">
+                                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                            <FontIcon Glyph="&#xE7C5;" />
+                                            <TextBlock x:Uid="FixedFrameImageSettingsText" Text=" Image Settings" VerticalAlignment="Center" Margin="4,0,0,0"/>
                                         </StackPanel>
                                     </Button>
                                 </StackPanel>

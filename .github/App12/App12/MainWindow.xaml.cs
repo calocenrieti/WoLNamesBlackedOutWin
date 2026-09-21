@@ -23,9 +23,11 @@ using System.Threading;
 using System.Threading.Tasks;
 using Windows.ApplicationModel;
 using Windows.ApplicationModel.Resources;
+using Windows.ApplicationModel.Resources.Core;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Globalization;
 using Windows.Graphics.Imaging;
+using Windows.Services.Store;
 using Windows.Storage;
 using Windows.Storage.Pickers;
 using Windows.UI;
@@ -129,6 +131,20 @@ namespace WoLNamesBlackedOut
         private int ocrMaxRoisPerFrame = 6;
         private int textSimilarityPercent = 85;
         private string maskExcludeTextCsv = string.Empty;
+        private ImageMaskPlacementMode blackedOutImageMaskMode = ImageMaskPlacementMode.Fit;
+        private string blackedOutImageMaskPath = string.Empty;
+        private bool useDefaultBlackedOutImageMask = true;
+        private string selectedDefaultBlackedOutImageMaskFileName = "01.png";
+        private float blackedOutImageRandomMinScale = 0.75f;
+        private float blackedOutImageRandomMaxScale = 2.0f;
+        private int blackedOutImageRandomLayoutChangeIntervalFrames = 90;
+        private bool blackedOutImageRandomAllowOverflow = false;
+        private ImageMaskPlacementMode fixedFrameImageMaskMode = ImageMaskPlacementMode.Fit;
+        private string fixedFrameImageMaskPath = string.Empty;
+        private bool useDefaultFixedFrameImageMask = true;
+        private string selectedDefaultFixedFrameImageMaskFileName = "01.png";
+        private const string CustomImageAddonStoreId = "WoLNamesBlackedOut.CustomImageAddon";
+        private readonly CustomImageAddonService customImageAddonService;
         // Crop settings (post-processing)
         private int cropTop = 0;
         private int cropLeft = 0;
@@ -148,6 +164,56 @@ namespace WoLNamesBlackedOut
             Left,
             Right,
             Bottom
+        }
+
+        private enum ImageMaskPlacementMode
+        {
+            Fit = 0,
+            Tile1 = 1,
+            Tile2 = 2,
+            Random = 3,
+        }
+
+        private sealed class CustomImageAddonService
+        {
+            private readonly string storeId;
+
+            public CustomImageAddonService(string storeId)
+            {
+                this.storeId = storeId;
+            }
+
+            public async Task<bool> IsPurchasedAsync()
+            {
+                try
+                {
+                    StoreContext context = StoreContext.GetDefault();
+                    StoreAppLicense appLicense = await context.GetAppLicenseAsync();
+                    if (appLicense.AddOnLicenses.TryGetValue(storeId, out StoreLicense? license))
+                    {
+                        return license.IsActive;
+                    }
+                }
+                catch
+                {
+                }
+
+                return false;
+            }
+
+            public async Task<bool> TryPurchaseAsync()
+            {
+                try
+                {
+                    StoreContext context = StoreContext.GetDefault();
+                    StorePurchaseResult result = await context.RequestPurchaseAsync(storeId);
+                    return result.Status == StorePurchaseStatus.Succeeded || result.Status == StorePurchaseStatus.AlreadyPurchased;
+                }
+                catch
+                {
+                    return false;
+                }
+            }
         }
 
         // --- Crop helpers and UI handlers ---
@@ -544,12 +610,38 @@ namespace WoLNamesBlackedOut
         {
             try
             {
-                string value = ResourceLoader.GetForViewIndependentUse().GetString(key);
+                string language = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName.Equals("ja", StringComparison.OrdinalIgnoreCase)
+                    ? "ja-JP"
+                    : "en-US";
+
+                var resourceMap = ResourceManager.Current.MainResourceMap.GetSubtree("Resources");
+                var context = ResourceContext.GetForViewIndependentUse();
+                context.QualifierValues["Language"] = language;
+
+                var candidate = resourceMap.GetValue(key, context);
+                string value = candidate?.ValueAsString ?? string.Empty;
+
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    value = new ResourceLoader().GetString(key);
+                }
+
                 return string.IsNullOrWhiteSpace(value) ? fallback : value;
             }
             catch
             {
                 return fallback;
+            }
+        }
+
+        private static void ApplyResourceLanguageOverride(bool useJapanese)
+        {
+            try
+            {
+                ResourceContext.SetGlobalQualifierValue("Language", useJapanese ? "ja-JP" : "en-US");
+            }
+            catch
+            {
             }
         }
 
@@ -713,6 +805,8 @@ namespace WoLNamesBlackedOut
             {
                 RectInfo[] rectInfos = BuildRectInfos();
                 var (nameColor, fixedColor) = BuildMaskColors();
+                var blackedOutImageMaskSettings = GetBlackedOutImageMaskNativeSettings();
+                var fixedFrameImageMaskSettings = GetFixedFrameImageMaskNativeSettings();
 
                 FrameProcessor.PreviewFrameResult result = await FrameProcessor.Runpreview_apiAsync(
                     v_file_path,
@@ -730,6 +824,18 @@ namespace WoLNamesBlackedOut
                     copyrightOffsetX,
                     copyrightOffsetY,
                     (float)copyrightZoomScale,
+                    blackedOutImageMaskSettings.mode,
+                    blackedOutImageMaskSettings.path,
+                    blackedOutImageMaskSettings.randomMinScale,
+                    blackedOutImageMaskSettings.randomMaxScale,
+                    blackedOutImageMaskSettings.randomLayoutChangeIntervalFrames,
+                    blackedOutImageMaskSettings.randomAllowOverflow,
+                    fixedFrameImageMaskSettings.mode,
+                    fixedFrameImageMaskSettings.path,
+                    fixedFrameImageMaskSettings.randomMinScale,
+                    fixedFrameImageMaskSettings.randomMaxScale,
+                    fixedFrameImageMaskSettings.randomLayoutChangeIntervalFrames,
+                    fixedFrameImageMaskSettings.randomAllowOverflow,
                     ShouldBoostBlurForCpuPipeline());
 
                 if (result.Result != 0 || isWindowClosing)
@@ -938,6 +1044,7 @@ namespace WoLNamesBlackedOut
             Blur = 2,
             Inpaint = 0,
             NoInference = 4,
+            Image = 5,
         }
 
         [DllImport("WoLNamesBlackedOut_DLL.dll", CallingConvention = CallingConvention.StdCall)]
@@ -1072,6 +1179,118 @@ namespace WoLNamesBlackedOut
             {
                 Debug.WriteLine($"LocalFolder unavailable, fallback to LocalApplicationData: {ex.Message}");
                 return Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            }
+        }
+
+        private static bool IsAllowedDefaultImageMaskFileName(string fileName)
+        {
+            return fileName is "01.png" or "02.png" or "03.png" or "04.png" or "05.png";
+        }
+
+        private string ResolveDefaultImageMaskPath(string selectedDefaultFileName)
+        {
+            string safeDefaultFileName = IsAllowedDefaultImageMaskFileName(selectedDefaultFileName)
+                ? selectedDefaultFileName
+                : "01.png";
+
+            string[] defaultFileCandidates =
+            [
+                safeDefaultFileName,
+                "01.png",
+                "WoLNamesBlackedOut.png"
+            ];
+
+            foreach (string defaultFile in defaultFileCandidates)
+            {
+                var namedCandidates = new[]
+                {
+                    System.IO.Path.Combine(AppContext.BaseDirectory, defaultFile),
+                    System.IO.Path.Combine(Environment.CurrentDirectory, defaultFile),
+                    System.IO.Path.Combine(AppContext.BaseDirectory, "App12", defaultFile),
+                    System.IO.Path.Combine(AppContext.BaseDirectory, "App12", "App12", defaultFile)
+                };
+
+                foreach (string candidate in namedCandidates)
+                {
+                    if (File.Exists(candidate))
+                    {
+                        return candidate;
+                    }
+                }
+            }
+
+            var candidates = new[]
+            {
+                System.IO.Path.Combine(AppContext.BaseDirectory, "WoLNamesBlackedOut.png"),
+                System.IO.Path.Combine(Environment.CurrentDirectory, "WoLNamesBlackedOut.png"),
+                System.IO.Path.Combine(AppContext.BaseDirectory, "App12", "WoLNamesBlackedOut.png"),
+                System.IO.Path.Combine(AppContext.BaseDirectory, "App12", "App12", "WoLNamesBlackedOut.png")
+            };
+
+            foreach (string candidate in candidates)
+            {
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
+            }
+
+            return System.IO.Path.Combine(AppContext.BaseDirectory, "WoLNamesBlackedOut.png");
+        }
+
+        private string ResolveActiveBlackedOutImageMaskPath()
+        {
+            if (!useDefaultBlackedOutImageMask && !string.IsNullOrWhiteSpace(blackedOutImageMaskPath) && File.Exists(blackedOutImageMaskPath))
+            {
+                return blackedOutImageMaskPath;
+            }
+
+            return ResolveDefaultImageMaskPath(selectedDefaultBlackedOutImageMaskFileName);
+        }
+
+        private string ResolveActiveFixedFrameImageMaskPath()
+        {
+            if (!useDefaultFixedFrameImageMask && !string.IsNullOrWhiteSpace(fixedFrameImageMaskPath) && File.Exists(fixedFrameImageMaskPath))
+            {
+                return fixedFrameImageMaskPath;
+            }
+
+            return ResolveDefaultImageMaskPath(selectedDefaultFixedFrameImageMaskFileName);
+        }
+
+        private async Task<bool> EnsureCustomImageAddonAccessAsync()
+        {
+            if (await IsCustomImageAddonPurchasedAsync())
+            {
+                return true;
+            }
+
+            return await TryPurchaseCustomImageAddonAsync();
+        }
+
+        private async Task<bool> IsCustomImageAddonPurchasedAsync()
+        {
+            try
+            {
+                return await customImageAddonService.IsPurchasedAsync();
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"IsCustomImageAddonPurchasedAsync failed: {ex.Message}");
+                return false;
+            }
+        }
+
+        private async Task<bool> TryPurchaseCustomImageAddonAsync()
+        {
+            try
+            {
+                return await customImageAddonService.TryPurchaseAsync();
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"TryPurchaseCustomImageAddonAsync failed: {ex.Message}");
+                return false;
             }
         }
 
@@ -1210,6 +1429,7 @@ namespace WoLNamesBlackedOut
             {
             }
 
+            ApplyResourceLanguageOverride(useJapanese);
             ApplyUiCulture(useJapanese);
         }
 
@@ -1222,6 +1442,7 @@ namespace WoLNamesBlackedOut
         {
             StartupTrace("ctor:start");
             this.InitializeComponent();
+            customImageAddonService = new CustomImageAddonService(CustomImageAddonStoreId);
             StartupTrace("ctor:after init");
 
             DrawingCanvas.AddHandler(
@@ -1320,6 +1541,7 @@ namespace WoLNamesBlackedOut
             {
             }
 
+            ApplyResourceLanguageOverride(useJapaneseUi);
             ApplyUiCulture(useJapaneseUi);
 
             // Add_Copyright の設定を読み込み
@@ -1397,6 +1619,93 @@ namespace WoLNamesBlackedOut
                 }
             }
 
+            if (localSettings != null && localSettings.Values.TryGetValue("BlackedOutImageMaskMode", out object imageMaskModeValue))
+            {
+                if (int.TryParse(imageMaskModeValue?.ToString(), out int parsedImageMaskMode))
+                {
+                    blackedOutImageMaskMode = ConvertLegacyImageMaskMode(parsedImageMaskMode);
+                }
+            }
+
+            if (localSettings != null && localSettings.Values.TryGetValue("BlackedOutImageMaskPath", out object imageMaskPathValue))
+            {
+                blackedOutImageMaskPath = imageMaskPathValue?.ToString() ?? string.Empty;
+            }
+
+            if (localSettings != null && localSettings.Values.TryGetValue("SelectedDefaultBlackedOutImageMaskFileName", out object selectedDefaultImageMaskFileNameValue))
+            {
+                string candidate = selectedDefaultImageMaskFileNameValue?.ToString() ?? string.Empty;
+                if (candidate is "01.png" or "02.png" or "03.png" or "04.png" or "05.png")
+                {
+                    selectedDefaultBlackedOutImageMaskFileName = candidate;
+                }
+            }
+
+            if (localSettings != null && localSettings.Values.TryGetValue("UseDefaultBlackedOutImageMask", out object useDefaultImageMaskValue))
+            {
+                if (bool.TryParse(useDefaultImageMaskValue?.ToString(), out bool parsedUseDefaultImageMask))
+                {
+                    useDefaultBlackedOutImageMask = parsedUseDefaultImageMask;
+                }
+            }
+
+            if (localSettings != null && localSettings.Values.TryGetValue("BlackedOutImageRandomMinScale", out object randomMinScaleValue)
+                && TryParseSettingDouble(randomMinScaleValue, out double parsedRandomMinScale))
+            {
+                blackedOutImageRandomMinScale = (float)Math.Clamp(parsedRandomMinScale, 0.3, 1.0);
+            }
+
+            if (localSettings != null && localSettings.Values.TryGetValue("BlackedOutImageRandomMaxScale", out object randomMaxScaleValue)
+                && TryParseSettingDouble(randomMaxScaleValue, out double parsedRandomMaxScale))
+            {
+                blackedOutImageRandomMaxScale = (float)Math.Clamp(parsedRandomMaxScale, 1.0, 5.0);
+            }
+
+            if (localSettings != null && localSettings.Values.TryGetValue("BlackedOutImageRandomLayoutChangeIntervalFrames", out object randomLayoutChangeIntervalFramesValue)
+                && int.TryParse(randomLayoutChangeIntervalFramesValue?.ToString(), out int parsedRandomLayoutChangeIntervalFrames))
+            {
+                blackedOutImageRandomLayoutChangeIntervalFrames = Math.Clamp(parsedRandomLayoutChangeIntervalFrames, 1, 600);
+            }
+
+            if (localSettings != null && localSettings.Values.TryGetValue("BlackedOutImageRandomAllowOverflow", out object randomAllowOverflowValue))
+            {
+                if (bool.TryParse(randomAllowOverflowValue?.ToString(), out bool parsedRandomAllowOverflow))
+                {
+                    blackedOutImageRandomAllowOverflow = parsedRandomAllowOverflow;
+                }
+            }
+
+            if (localSettings != null && localSettings.Values.TryGetValue("FixedFrameImageMaskMode", out object fixedFrameImageMaskModeValue))
+            {
+                if (int.TryParse(fixedFrameImageMaskModeValue?.ToString(), out int parsedFixedFrameImageMaskMode))
+                {
+                    fixedFrameImageMaskMode = ConvertLegacyFixedFrameImageMaskMode(parsedFixedFrameImageMaskMode);
+                }
+            }
+
+            if (localSettings != null && localSettings.Values.TryGetValue("FixedFrameImageMaskPath", out object fixedFrameImageMaskPathValue))
+            {
+                fixedFrameImageMaskPath = fixedFrameImageMaskPathValue?.ToString() ?? string.Empty;
+            }
+
+            if (localSettings != null && localSettings.Values.TryGetValue("SelectedDefaultFixedFrameImageMaskFileName", out object selectedDefaultFixedFrameImageMaskFileNameValue))
+            {
+                string candidate = selectedDefaultFixedFrameImageMaskFileNameValue?.ToString() ?? string.Empty;
+                if (IsAllowedDefaultImageMaskFileName(candidate))
+                {
+                    selectedDefaultFixedFrameImageMaskFileName = candidate;
+                }
+            }
+
+            if (localSettings != null && localSettings.Values.TryGetValue("UseDefaultFixedFrameImageMask", out object useDefaultFixedFrameImageMaskValue))
+            {
+                if (bool.TryParse(useDefaultFixedFrameImageMaskValue?.ToString(), out bool parsedUseDefaultFixedFrameImageMask))
+                {
+                    useDefaultFixedFrameImageMask = parsedUseDefaultFixedFrameImageMask;
+                }
+            }
+
+
             if (localSettings != null && localSettings.Values.TryGetValue("MaskExcludeTextCsv", out object maskExcludeTextCsvValue))
             {
                 maskExcludeTextCsv = maskExcludeTextCsvValue?.ToString() ?? string.Empty;
@@ -1441,8 +1750,12 @@ namespace WoLNamesBlackedOut
 
             // 最適化プロファイルは常にStep3（UIは非表示）
             OptimizationModeComboBox.SelectedIndex = 3;
-            ConfigureMaskSliderForType(BlackedOutSlideBar, GetComboText(BlackedOut_ComboBox, "Solid"));
-            ConfigureMaskSliderForType(FixedFrameSlideBar, GetComboText(FixedFrame_ComboBox, "Solid"));
+            string initialBlackedType = GetComboText(BlackedOut_ComboBox, "Solid");
+            string initialFixedType = GetComboText(FixedFrame_ComboBox, "Solid");
+            ConfigureMaskSliderForType(BlackedOutSlideBar, initialBlackedType);
+            ConfigureMaskSliderForType(FixedFrameSlideBar, initialFixedType);
+            ApplyBlackedOutMaskControlVisibility(initialBlackedType);
+            ApplyFixedFrameMaskControlVisibility(initialFixedType);
             InitializeMaskSliderCaches();
             StartupTrace("ctor:after settings");
 
@@ -2207,6 +2520,11 @@ namespace WoLNamesBlackedOut
             return value == "Mosaic" || value == "Blur" || value == "Inpaint";
         }
 
+        private static bool IsImageMaskType(string value)
+        {
+            return value == "Image";
+        }
+
         private bool IsInpaintSliderSupportedOnCurrentPipeline()
         {
             return !(IsForceCpuPipelineEnabledFromEnv() || FrameProcessor.IsCpuPipelineFallbackDetected);
@@ -2241,7 +2559,7 @@ namespace WoLNamesBlackedOut
 
         private void ApplyBlackedOutMaskControlVisibility(string value)
         {
-            if (BlackedOut_color == null || BlackedOutSlideBar == null)
+            if (BlackedOut_color == null || BlackedOutSlideBar == null || BlackedOutImageSettingsButton == null)
             {
                 return;
             }
@@ -2250,16 +2568,58 @@ namespace WoLNamesBlackedOut
             {
                 BlackedOut_color.Visibility = Visibility.Visible;
                 BlackedOutSlideBar.Visibility = Visibility.Collapsed;
+                BlackedOutImageSettingsButton.Visibility = Visibility.Collapsed;
             }
             else if (ShouldShowBlackedOutSlider(value))
             {
                 BlackedOut_color.Visibility = Visibility.Collapsed;
                 BlackedOutSlideBar.Visibility = Visibility.Visible;
+                BlackedOutImageSettingsButton.Visibility = Visibility.Collapsed;
+            }
+            else if (IsImageMaskType(value))
+            {
+                BlackedOut_color.Visibility = Visibility.Collapsed;
+                BlackedOutSlideBar.Visibility = Visibility.Collapsed;
+                BlackedOutImageSettingsButton.Visibility = Visibility.Visible;
             }
             else
             {
                 BlackedOut_color.Visibility = Visibility.Collapsed;
                 BlackedOutSlideBar.Visibility = Visibility.Collapsed;
+                BlackedOutImageSettingsButton.Visibility = Visibility.Collapsed;
+            }
+        }
+
+        private void ApplyFixedFrameMaskControlVisibility(string value)
+        {
+            if (FixedFrame_color == null || FixedFrameSlideBar == null || FixedFrameImageSettingsButton == null)
+            {
+                return;
+            }
+
+            if (value == "Solid")
+            {
+                FixedFrame_color.Visibility = Visibility.Visible;
+                FixedFrameSlideBar.Visibility = Visibility.Collapsed;
+                FixedFrameImageSettingsButton.Visibility = Visibility.Collapsed;
+            }
+            else if (IsSliderMaskType(value))
+            {
+                FixedFrame_color.Visibility = Visibility.Collapsed;
+                FixedFrameSlideBar.Visibility = Visibility.Visible;
+                FixedFrameImageSettingsButton.Visibility = Visibility.Collapsed;
+            }
+            else if (IsImageMaskType(value))
+            {
+                FixedFrame_color.Visibility = Visibility.Collapsed;
+                FixedFrameSlideBar.Visibility = Visibility.Collapsed;
+                FixedFrameImageSettingsButton.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                FixedFrame_color.Visibility = Visibility.Collapsed;
+                FixedFrameSlideBar.Visibility = Visibility.Collapsed;
+                FixedFrameImageSettingsButton.Visibility = Visibility.Collapsed;
             }
         }
 
@@ -2452,6 +2812,18 @@ namespace WoLNamesBlackedOut
                 try { localSettings.Values["OcrMaxRoisPerFrame"] = ocrMaxRoisPerFrame; } catch { }
                 try { localSettings.Values["TextSimilarityPercent"] = textSimilarityPercent; } catch { }
                 try { localSettings.Values["MaskExcludeTextCsv"] = maskExcludeTextCsv ?? string.Empty; } catch { }
+                try { localSettings.Values["BlackedOutImageMaskMode"] = (int)blackedOutImageMaskMode; } catch { }
+                try { localSettings.Values["BlackedOutImageMaskPath"] = blackedOutImageMaskPath ?? string.Empty; } catch { }
+                try { localSettings.Values["UseDefaultBlackedOutImageMask"] = useDefaultBlackedOutImageMask; } catch { }
+                try { localSettings.Values["SelectedDefaultBlackedOutImageMaskFileName"] = selectedDefaultBlackedOutImageMaskFileName; } catch { }
+                try { localSettings.Values["BlackedOutImageRandomMinScale"] = blackedOutImageRandomMinScale; } catch { }
+                try { localSettings.Values["BlackedOutImageRandomMaxScale"] = blackedOutImageRandomMaxScale; } catch { }
+                try { localSettings.Values["BlackedOutImageRandomLayoutChangeIntervalFrames"] = blackedOutImageRandomLayoutChangeIntervalFrames; } catch { }
+                try { localSettings.Values["BlackedOutImageRandomAllowOverflow"] = blackedOutImageRandomAllowOverflow; } catch { }
+                try { localSettings.Values["FixedFrameImageMaskMode"] = (int)fixedFrameImageMaskMode; } catch { }
+                try { localSettings.Values["FixedFrameImageMaskPath"] = fixedFrameImageMaskPath ?? string.Empty; } catch { }
+                try { localSettings.Values["UseDefaultFixedFrameImageMask"] = useDefaultFixedFrameImageMask; } catch { }
+                try { localSettings.Values["SelectedDefaultFixedFrameImageMaskFileName"] = selectedDefaultFixedFrameImageMaskFileName; } catch { }
                 try { localSettings.Values[UiLanguagePreferenceKey] = LanguageJP?.IsChecked == true; } catch { }
                 try
                 {
@@ -2798,6 +3170,8 @@ namespace WoLNamesBlackedOut
                 var (nameColor, fixedColor) = BuildMaskColors();
 
                 string resolvedCopyrightPath = ResolveActiveCopyrightPath();
+                var blackedOutImageMaskSettings = GetBlackedOutImageMaskNativeSettings();
+                var fixedFrameImageMaskSettings = GetFixedFrameImageMaskNativeSettings();
                 BeginPreviewStatusFeedback(GetLocalizedString("Runtime.PreviewInitializing", "Preparing preview..."));
                 bool previewSucceeded = false;
                 try
@@ -2806,7 +3180,17 @@ namespace WoLNamesBlackedOut
                         v_file_path, rectInfos, rectInfos.Length, nameColor, fixedColor,
                         Add_Copyright.IsChecked == true, GetComboText(BlackedOut_ComboBox, "Solid"), GetComboText(FixedFrame_ComboBox, "Solid"),
                         (int)BlackedOutSlideBar.Value, (int)FixedFrameSlideBar.Value, GetYoloThreshold(), resolvedCopyrightPath,
-                        copyrightOffsetX, copyrightOffsetY, (float)copyrightZoomScale, ShouldBoostBlurForCpuPipeline());
+                        copyrightOffsetX, copyrightOffsetY, (float)copyrightZoomScale,
+                        blackedOutImageMaskSettings.mode, blackedOutImageMaskSettings.path, blackedOutImageMaskSettings.randomMinScale, blackedOutImageMaskSettings.randomMaxScale,
+                        blackedOutImageMaskSettings.randomLayoutChangeIntervalFrames,
+                        blackedOutImageMaskSettings.randomAllowOverflow,
+                        fixedFrameImageMaskSettings.mode,
+                        fixedFrameImageMaskSettings.path,
+                        fixedFrameImageMaskSettings.randomMinScale,
+                        fixedFrameImageMaskSettings.randomMaxScale,
+                        fixedFrameImageMaskSettings.randomLayoutChangeIntervalFrames,
+                        fixedFrameImageMaskSettings.randomAllowOverflow,
+                        ShouldBoostBlurForCpuPipeline());
 
                     last_preview_image = string.Empty;
                     previewSucceeded = UpdateImagePreview(result);
@@ -2947,6 +3331,8 @@ namespace WoLNamesBlackedOut
                 int blackedOutParam = (int)BlackedOutSlideBar.Value;
                 int fixedFrameParam = (int)FixedFrameSlideBar.Value;
                 bool addCopyright = Add_Copyright.IsChecked.Value;
+                var blackedOutImageMaskSettings = GetBlackedOutImageMaskNativeSettings();
+                var fixedFrameImageMaskSettings = GetFixedFrameImageMaskNativeSettings();
 
                 int updateResult = await Task.Run(() => FrameProcessor.PreviewUpdateMask(
                     rectInfos,
@@ -2966,6 +3352,18 @@ namespace WoLNamesBlackedOut
                     ocrMaxRoisPerFrame,
                     GetTextSimilarityThreshold(),
                     maskExcludeTextCsv,
+                    blackedOutImageMaskSettings.mode,
+                    blackedOutImageMaskSettings.path,
+                    blackedOutImageMaskSettings.randomMinScale,
+                    blackedOutImageMaskSettings.randomMaxScale,
+                    blackedOutImageMaskSettings.randomLayoutChangeIntervalFrames,
+                    blackedOutImageMaskSettings.randomAllowOverflow,
+                    fixedFrameImageMaskSettings.mode,
+                    fixedFrameImageMaskSettings.path,
+                    fixedFrameImageMaskSettings.randomMinScale,
+                    fixedFrameImageMaskSettings.randomMaxScale,
+                    fixedFrameImageMaskSettings.randomLayoutChangeIntervalFrames,
+                    fixedFrameImageMaskSettings.randomAllowOverflow,
                     ShouldBoostBlurForCpuPipeline()));
 
                 if (isWindowClosing || !previewSessionOpen)
@@ -3159,6 +3557,22 @@ namespace WoLNamesBlackedOut
                 public float text_similarity_threshold;
                 [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 512)]
                 public string mask_exclude_text_csv;
+                public int blacked_image_mode;
+                [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 512)]
+                public string blacked_image_path;
+                public float blacked_image_random_min_scale;
+                public float blacked_image_random_max_scale;
+                public int blacked_image_random_interval_frames;
+                [MarshalAs(UnmanagedType.I1)]
+                public bool blacked_image_random_allow_overflow;
+                public int fixed_image_mode;
+                [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 512)]
+                public string fixed_image_path;
+                public float fixed_image_random_min_scale;
+                public float fixed_image_random_max_scale;
+                public int fixed_image_random_interval_frames;
+                [MarshalAs(UnmanagedType.I1)]
+                public bool fixed_image_random_allow_overflow;
                 [MarshalAs(UnmanagedType.ByValArray, SizeConst = 4)]
                 public int[] reserved;
             }
@@ -3190,6 +3604,18 @@ namespace WoLNamesBlackedOut
                 int ocr_max_rois_per_frame,
                 float text_similarity_threshold,
                 [MarshalAs(UnmanagedType.LPUTF8Str)] string mask_exclude_text_csv,
+                int blacked_image_mode,
+                [MarshalAs(UnmanagedType.LPUTF8Str)] string blacked_image_path,
+                float blacked_image_random_min_scale,
+                float blacked_image_random_max_scale,
+                int blacked_image_random_interval_frames,
+                [MarshalAs(UnmanagedType.I1)] bool blacked_image_random_allow_overflow,
+                int fixed_image_mode,
+                [MarshalAs(UnmanagedType.LPUTF8Str)] string fixed_image_path,
+                float fixed_image_random_min_scale,
+                float fixed_image_random_max_scale,
+                int fixed_image_random_interval_frames,
+                [MarshalAs(UnmanagedType.I1)] bool fixed_image_random_allow_overflow,
                 [MarshalAs(UnmanagedType.LPUTF8Str)] string bitrate,
                 [MarshalAs(UnmanagedType.LPUTF8Str)] string preset,
                 [MarshalAs(UnmanagedType.I1)] bool disable_audio,
@@ -3404,6 +3830,7 @@ namespace WoLNamesBlackedOut
                     "Mosaic" => MaskTypeKind.Mosaic,
                     "Blur" => MaskTypeKind.Blur,
                     "No_Inference" => MaskTypeKind.NoInference,
+                    "Image" => MaskTypeKind.Image,
                     _ => MaskTypeKind.Solid,
                 };
             }
@@ -3555,6 +3982,18 @@ namespace WoLNamesBlackedOut
                 int ocrMaxRoisPerFrame = 6,
                 float textSimilarityThreshold = 0.85f,
                 string maskExcludeTextCsv = "",
+                int blackedImageMode = 0,
+                string blackedImagePath = "",
+                float blackedImageRandomMinScale = 0.75f,
+                float blackedImageRandomMaxScale = 2.0f,
+                int blackedImageRandomIntervalFrames = 90,
+                bool blackedImageRandomAllowOverflow = false,
+                int fixedImageMode = 0,
+                string fixedImagePath = "",
+                float fixedImageRandomMinScale = 0.75f,
+                float fixedImageRandomMaxScale = 2.0f,
+                int fixedImageRandomIntervalFrames = 90,
+                bool fixedImageRandomAllowOverflow = false,
                 bool boostBlurForCpuPipeline = false)
             {
                 return Task.Run(() =>
@@ -3572,6 +4011,18 @@ namespace WoLNamesBlackedOut
                         ocrMaxRoisPerFrame,
                         textSimilarityThreshold,
                         maskExcludeTextCsv ?? string.Empty,
+                        blackedImageMode,
+                        blackedImagePath ?? string.Empty,
+                        blackedImageRandomMinScale,
+                        blackedImageRandomMaxScale,
+                        blackedImageRandomIntervalFrames,
+                        blackedImageRandomAllowOverflow,
+                        fixedImageMode,
+                        fixedImagePath ?? string.Empty,
+                        fixedImageRandomMinScale,
+                        fixedImageRandomMaxScale,
+                        fixedImageRandomIntervalFrames,
+                        fixedImageRandomAllowOverflow,
                         bitrate, preset, disableAudio,
                         cropTop,
                         cropLeft,
@@ -3597,6 +4048,18 @@ namespace WoLNamesBlackedOut
                  int ocrMaxRoisPerFrame = 6,
                   float textSimilarityThreshold = 0.85f,
                   string maskExcludeTextCsv = "",
+                   int blackedImageMode = 0,
+                   string blackedImagePath = "",
+                   float blackedImageRandomMinScale = 0.75f,
+                   float blackedImageRandomMaxScale = 2.0f,
+                    int blackedImageRandomIntervalFrames = 90,
+                    bool blackedImageRandomAllowOverflow = false,
+                    int fixedImageMode = 0,
+                    string fixedImagePath = "",
+                    float fixedImageRandomMinScale = 0.75f,
+                    float fixedImageRandomMaxScale = 2.0f,
+                    int fixedImageRandomIntervalFrames = 90,
+                    bool fixedImageRandomAllowOverflow = false,
                   bool boostBlurForCpuPipeline = false)
             {
                 return RunDmlMainAsync(inputVideoPath, outputVideoPath, codec, hwaccel, width, height, fps, trimStartSeconds, trimEndSeconds, confThreshold,
@@ -3613,6 +4076,18 @@ namespace WoLNamesBlackedOut
                     ocrMaxRoisPerFrame,
                     textSimilarityThreshold,
                     maskExcludeTextCsv,
+                    blackedImageMode,
+                    blackedImagePath,
+                    blackedImageRandomMinScale,
+                    blackedImageRandomMaxScale,
+                    blackedImageRandomIntervalFrames,
+                    blackedImageRandomAllowOverflow,
+                    fixedImageMode,
+                    fixedImagePath,
+                    fixedImageRandomMinScale,
+                    fixedImageRandomMaxScale,
+                    fixedImageRandomIntervalFrames,
+                    fixedImageRandomAllowOverflow,
                     boostBlurForCpuPipeline);
             }
             public sealed class PreviewFrameResult
@@ -3636,6 +4111,18 @@ namespace WoLNamesBlackedOut
                 int copyrightOffsetX = 0,
                 int copyrightOffsetY = 0,
                 float copyrightScale = 1.0f,
+                int blackedImageMode = 0,
+                string blackedImagePath = "",
+                float blackedImageRandomMinScale = 0.75f,
+                float blackedImageRandomMaxScale = 2.0f,
+                int blackedImageRandomIntervalFrames = 90,
+                bool blackedImageRandomAllowOverflow = false,
+                int fixedImageMode = 0,
+                string fixedImagePath = "",
+                float fixedImageRandomMinScale = 0.75f,
+                float fixedImageRandomMaxScale = 2.0f,
+                int fixedImageRandomIntervalFrames = 90,
+                bool fixedImageRandomAllowOverflow = false,
                 bool boostBlurForCpuPipeline = false)
             {
                 return Task.Run(() =>
@@ -3687,6 +4174,18 @@ namespace WoLNamesBlackedOut
                             ocr_max_rois_per_frame = 6,
                             text_similarity_threshold = 0.85f,
                             mask_exclude_text_csv = string.Empty,
+                            blacked_image_mode = blackedImageMode,
+                            blacked_image_path = blackedImagePath ?? string.Empty,
+                            blacked_image_random_min_scale = blackedImageRandomMinScale,
+                            blacked_image_random_max_scale = blackedImageRandomMaxScale,
+                            blacked_image_random_interval_frames = blackedImageRandomIntervalFrames,
+                            blacked_image_random_allow_overflow = blackedImageRandomAllowOverflow,
+                            fixed_image_mode = fixedImageMode,
+                            fixed_image_path = fixedImagePath ?? string.Empty,
+                            fixed_image_random_min_scale = fixedImageRandomMinScale,
+                            fixed_image_random_max_scale = fixedImageRandomMaxScale,
+                            fixed_image_random_interval_frames = fixedImageRandomIntervalFrames,
+                            fixed_image_random_allow_overflow = fixedImageRandomAllowOverflow,
                             reserved = new int[4],
                         };
                         maskParams.blackedout_param = NormalizeMaskParamForNative(maskParams.blacked_type, blackedout_param, boostBlurForCpuPipeline);
@@ -3774,6 +4273,18 @@ namespace WoLNamesBlackedOut
                 int ocrMaxRoisPerFrame = 6,
                 float textSimilarityThreshold = 0.85f,
                 string maskExcludeTextCsv = "",
+                int blackedImageMode = 0,
+                string blackedImagePath = "",
+                float blackedImageRandomMinScale = 0.75f,
+                float blackedImageRandomMaxScale = 2.0f,
+                int blackedImageRandomIntervalFrames = 90,
+                bool blackedImageRandomAllowOverflow = false,
+                int fixedImageMode = 0,
+                string fixedImagePath = "",
+                float fixedImageRandomMinScale = 0.75f,
+                float fixedImageRandomMaxScale = 2.0f,
+                int fixedImageRandomIntervalFrames = 90,
+                bool fixedImageRandomAllowOverflow = false,
                 bool boostBlurForCpuPipeline = false)
             {
                 var nativeRects = new RectInfo[64];
@@ -3797,6 +4308,18 @@ namespace WoLNamesBlackedOut
                     ocr_max_rois_per_frame = ocrMaxRoisPerFrame,
                     text_similarity_threshold = textSimilarityThreshold,
                     mask_exclude_text_csv = maskExcludeTextCsv ?? string.Empty,
+                    blacked_image_mode = blackedImageMode,
+                    blacked_image_path = blackedImagePath ?? string.Empty,
+                    blacked_image_random_min_scale = blackedImageRandomMinScale,
+                    blacked_image_random_max_scale = blackedImageRandomMaxScale,
+                    blacked_image_random_interval_frames = blackedImageRandomIntervalFrames,
+                    blacked_image_random_allow_overflow = blackedImageRandomAllowOverflow,
+                    fixed_image_mode = fixedImageMode,
+                    fixed_image_path = fixedImagePath ?? string.Empty,
+                    fixed_image_random_min_scale = fixedImageRandomMinScale,
+                    fixed_image_random_max_scale = fixedImageRandomMaxScale,
+                    fixed_image_random_interval_frames = fixedImageRandomIntervalFrames,
+                    fixed_image_random_allow_overflow = fixedImageRandomAllowOverflow,
                     reserved = new int[4],
                 };
                 maskParams.blackedout_param = NormalizeMaskParamForNative(maskParams.blacked_type, blackedout_param, boostBlurForCpuPipeline);
@@ -4124,6 +4647,8 @@ namespace WoLNamesBlackedOut
                 int blackedOutParam = (int)BlackedOutSlideBar.Value;
                 int fixedFrameParam = (int)FixedFrameSlideBar.Value;
                 bool addCopyright = Add_Copyright.IsChecked.Value;
+                var blackedOutImageMaskSettings = GetBlackedOutImageMaskNativeSettings();
+                var fixedFrameImageMaskSettings = GetFixedFrameImageMaskNativeSettings();
 
                 int updateResult = await Task.Run(() => FrameProcessor.PreviewUpdateMask(
                     rectInfos,
@@ -4143,6 +4668,18 @@ namespace WoLNamesBlackedOut
                     ocrMaxRoisPerFrame,
                     GetTextSimilarityThreshold(),
                     maskExcludeTextCsv,
+                    blackedOutImageMaskSettings.mode,
+                    blackedOutImageMaskSettings.path,
+                    blackedOutImageMaskSettings.randomMinScale,
+                    blackedOutImageMaskSettings.randomMaxScale,
+                    blackedOutImageMaskSettings.randomLayoutChangeIntervalFrames,
+                    blackedOutImageMaskSettings.randomAllowOverflow,
+                    fixedFrameImageMaskSettings.mode,
+                    fixedFrameImageMaskSettings.path,
+                    fixedFrameImageMaskSettings.randomMinScale,
+                    fixedFrameImageMaskSettings.randomMaxScale,
+                    fixedFrameImageMaskSettings.randomLayoutChangeIntervalFrames,
+                    fixedFrameImageMaskSettings.randomAllowOverflow,
                     ShouldBoostBlurForCpuPipeline()));
 
                 if (isWindowClosing || !previewSessionOpen)
@@ -4403,6 +4940,8 @@ namespace WoLNamesBlackedOut
             int offsetX = copyrightOffsetX;
             int offsetY = copyrightOffsetY;
             float scale = (float)copyrightZoomScale;
+            var blackedOutImageMaskSettings = GetBlackedOutImageMaskNativeSettings();
+            var fixedFrameImageMaskSettings = GetFixedFrameImageMaskNativeSettings();
 
             int updateResult = await Task.Run(() => FrameProcessor.PreviewUpdateMask(
                 rectInfos,
@@ -4422,6 +4961,18 @@ namespace WoLNamesBlackedOut
                 ocrMaxRoisPerFrame,
                 GetTextSimilarityThreshold(),
                 maskExcludeTextCsv,
+                blackedOutImageMaskSettings.mode,
+                blackedOutImageMaskSettings.path,
+                blackedOutImageMaskSettings.randomMinScale,
+                blackedOutImageMaskSettings.randomMaxScale,
+                blackedOutImageMaskSettings.randomLayoutChangeIntervalFrames,
+                blackedOutImageMaskSettings.randomAllowOverflow,
+                fixedFrameImageMaskSettings.mode,
+                fixedFrameImageMaskSettings.path,
+                fixedFrameImageMaskSettings.randomMinScale,
+                fixedFrameImageMaskSettings.randomMaxScale,
+                fixedFrameImageMaskSettings.randomLayoutChangeIntervalFrames,
+                fixedFrameImageMaskSettings.randomAllowOverflow,
                 ShouldBoostBlurForCpuPipeline()));
 
             if (updateResult != 0)
@@ -4485,6 +5036,8 @@ namespace WoLNamesBlackedOut
 
             var rectInfos = BuildRectInfos();
             var (nameColor, fixedColor) = BuildMaskColors();
+            var blackedOutImageMaskSettings = GetBlackedOutImageMaskNativeSettings();
+            var fixedFrameImageMaskSettings = GetFixedFrameImageMaskNativeSettings();
             FrameProcessor.PreviewFrameResult result = await FrameProcessor.Runpreview_apiAsync(
                 v_file_path,
                 rectInfos,
@@ -4500,8 +5053,20 @@ namespace WoLNamesBlackedOut
                 copyrightImagePath ?? string.Empty,
                 copyrightOffsetX,
                 copyrightOffsetY,
-                    (float)copyrightZoomScale,
-                    ShouldBoostBlurForCpuPipeline());
+                (float)copyrightZoomScale,
+                blackedOutImageMaskSettings.mode,
+                blackedOutImageMaskSettings.path,
+                blackedOutImageMaskSettings.randomMinScale,
+                blackedOutImageMaskSettings.randomMaxScale,
+                blackedOutImageMaskSettings.randomLayoutChangeIntervalFrames,
+                blackedOutImageMaskSettings.randomAllowOverflow,
+                fixedFrameImageMaskSettings.mode,
+                fixedFrameImageMaskSettings.path,
+                fixedFrameImageMaskSettings.randomMinScale,
+                fixedFrameImageMaskSettings.randomMaxScale,
+                fixedFrameImageMaskSettings.randomLayoutChangeIntervalFrames,
+                fixedFrameImageMaskSettings.randomAllowOverflow,
+                ShouldBoostBlurForCpuPipeline());
 
             if (result.Result != 0)
             {
@@ -4946,20 +5511,20 @@ namespace WoLNamesBlackedOut
                             new HyperlinkButton { Content = "Microsoft.Windows.AI.MachineLearning 2.3.42", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.Windows.AI.MachineLearning/2.3.42/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "Microsoft.Windows.CppWinRT 3.0.260818.1", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.Windows.CppWinRT/3.0.260818.1/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             //c#
-                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK 2.4.0", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK/2.4.0/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK 2.5.1", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK/2.5.1/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "Microsoft.Windows.SDK.BuildTools 10.0.28000.2705", NavigateUri = new Uri("https://aka.ms/WinSDKLicenseURL"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "Microsoft.Windows.SDK.BuildTools.MSIX 1.7.251221100", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsSDK.BuildTools.MSIX/1.7.251221100/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "Microsoft.Windows.AI.MachineLearning 2.1.74", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.Windows.AI.MachineLearning/2.1.74/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.AI 2.4.4", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.AI/2.4.4/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.AI 2.5.5", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.AI/2.5.5/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.Base 2.0.4", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.Base/2.0.4/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.DWrite 2.1.0", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.DWrite/2.1.0/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.Foundation 2.3.9", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.Foundation/2.3.9/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.InteractiveExperien 2.1.6", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.InteractiveExperiences/2.1.6/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.ML 2.1.74", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.ML/2.1.74/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.Runtime 2.4.0", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.Runtime/2.4.0/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.Search 2.4.4", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.Search/2.4.4/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.Foundation 2.3.12", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.Foundation/2.3.12/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.InteractiveExperien 2.1.9", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.InteractiveExperiences/2.1.9/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.ML 2.1.94", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.ML/2.1.94/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.Runtime 2.5.1", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.Runtime/2.5.1/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.Search 2.5.5", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.Search/2.5.5/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.Widgets 2.0.5", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.Widgets/2.0.5/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.WinUI 2.3.6", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.WinUI/2.3.6/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.WinUI 2.3.9", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.WinUI/2.3.9/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "Microsoft.Web.WebView2 1.0.4191.47", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.Web.WebView2/1.0.4191.47/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "System.Numerics.Tensors 9.0.0", NavigateUri = new Uri("https://licenses.nuget.org/MIT"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             //model
@@ -5068,9 +5633,11 @@ namespace WoLNamesBlackedOut
             BeginPreviewStatusFeedback(GetLocalizedString("Runtime.PreviewInitializing", "Preparing preview..."));
             bool previewApiSucceeded = false;
             FrameProcessor.PreviewFrameResult? previewFrame = null;
+            var blackedOutImageMaskSettings = GetBlackedOutImageMaskNativeSettings();
+            var fixedFrameImageMaskSettings = GetFixedFrameImageMaskNativeSettings();
             try
             {
-                previewFrame = await FrameProcessor.Runpreview_apiAsync(v_file_path, rectInfos, rectInfos.Length, BlackedOut_color_icon_color_info, FixedFrame_color_icon_color_Info, Add_Copyright.IsChecked.Value, GetComboText(BlackedOut_ComboBox, "Solid"), GetComboText(FixedFrame_ComboBox, "Solid"), (int)BlackedOutSlideBar.Value, (int)FixedFrameSlideBar.Value, GetYoloThreshold(), copyrightImagePath ?? string.Empty, copyrightOffsetX, copyrightOffsetY, (float)copyrightZoomScale, ShouldBoostBlurForCpuPipeline());
+                previewFrame = await FrameProcessor.Runpreview_apiAsync(v_file_path, rectInfos, rectInfos.Length, BlackedOut_color_icon_color_info, FixedFrame_color_icon_color_Info, Add_Copyright.IsChecked.Value, GetComboText(BlackedOut_ComboBox, "Solid"), GetComboText(FixedFrame_ComboBox, "Solid"), (int)BlackedOutSlideBar.Value, (int)FixedFrameSlideBar.Value, GetYoloThreshold(), copyrightImagePath ?? string.Empty, copyrightOffsetX, copyrightOffsetY, (float)copyrightZoomScale, blackedOutImageMaskSettings.mode, blackedOutImageMaskSettings.path, blackedOutImageMaskSettings.randomMinScale, blackedOutImageMaskSettings.randomMaxScale, blackedOutImageMaskSettings.randomLayoutChangeIntervalFrames, blackedOutImageMaskSettings.randomAllowOverflow, fixedFrameImageMaskSettings.mode, fixedFrameImageMaskSettings.path, fixedFrameImageMaskSettings.randomMinScale, fixedFrameImageMaskSettings.randomMaxScale, fixedFrameImageMaskSettings.randomLayoutChangeIntervalFrames, fixedFrameImageMaskSettings.randomAllowOverflow, ShouldBoostBlurForCpuPipeline());
                 previewApiSucceeded = previewFrame.Result == 0;
             }
             finally
@@ -5318,9 +5885,11 @@ namespace WoLNamesBlackedOut
                 timer.Start();
 
                 int processResult;
+                var blackedOutImageMaskSettings = GetBlackedOutImageMaskNativeSettings();
+                var fixedFrameImageMaskSettings = GetFixedFrameImageMaskNativeSettings();
 
                 {
-                    processResult = await FrameProcessor.RunDmlMainAsync(video_temp_filename_1, video_temp_filename_2, effectiveCodec, hwaccel, v_width, v_height, v_fps, start_time, end_time, GetYoloThreshold(), v_color_primaries, rectInfos, rectInfos.Length, BlackedOut_color_icon_color_info, FixedFrame_color_icon_color_Info, Add_Copyright.IsChecked.Value, FrameProcessor.MaskTypeToNative(FrameProcessor.GetMaskTypeKind(GetComboText(BlackedOut_ComboBox, "Solid"))), FrameProcessor.MaskTypeToNative(FrameProcessor.GetMaskTypeKind(GetComboText(FixedFrame_ComboBox, "Solid"))), (int)BlackedOutSlideBar.Value, (int)FixedFrameSlideBar.Value, copyrightOffsetX, copyrightOffsetY, (float)copyrightZoomScale, copyrightImagePath ?? string.Empty, v_bitrate, preset, disableAudio, CropEnabledCheckBox?.IsChecked == true ? cropTop : 0, CropEnabledCheckBox?.IsChecked == true ? cropLeft : 0, CropEnabledCheckBox?.IsChecked == true ? cropRight : 0, CropEnabledCheckBox?.IsChecked == true ? cropBottom : 0, excludeByNameEnabled, ocrExpandPixels, ocrMaxRoisPerFrame, GetTextSimilarityThreshold(), maskExcludeTextCsv, ShouldBoostBlurForCpuPipeline());
+                    processResult = await FrameProcessor.RunDmlMainAsync(video_temp_filename_1, video_temp_filename_2, effectiveCodec, hwaccel, v_width, v_height, v_fps, start_time, end_time, GetYoloThreshold(), v_color_primaries, rectInfos, rectInfos.Length, BlackedOut_color_icon_color_info, FixedFrame_color_icon_color_Info, Add_Copyright.IsChecked.Value, FrameProcessor.MaskTypeToNative(FrameProcessor.GetMaskTypeKind(GetComboText(BlackedOut_ComboBox, "Solid"))), FrameProcessor.MaskTypeToNative(FrameProcessor.GetMaskTypeKind(GetComboText(FixedFrame_ComboBox, "Solid"))), (int)BlackedOutSlideBar.Value, (int)FixedFrameSlideBar.Value, copyrightOffsetX, copyrightOffsetY, (float)copyrightZoomScale, copyrightImagePath ?? string.Empty, v_bitrate, preset, disableAudio, CropEnabledCheckBox?.IsChecked == true ? cropTop : 0, CropEnabledCheckBox?.IsChecked == true ? cropLeft : 0, CropEnabledCheckBox?.IsChecked == true ? cropRight : 0, CropEnabledCheckBox?.IsChecked == true ? cropBottom : 0, excludeByNameEnabled, ocrExpandPixels, ocrMaxRoisPerFrame, GetTextSimilarityThreshold(), maskExcludeTextCsv, blackedOutImageMaskSettings.mode, blackedOutImageMaskSettings.path, blackedOutImageMaskSettings.randomMinScale, blackedOutImageMaskSettings.randomMaxScale, blackedOutImageMaskSettings.randomLayoutChangeIntervalFrames, blackedOutImageMaskSettings.randomAllowOverflow, fixedFrameImageMaskSettings.mode, fixedFrameImageMaskSettings.path, fixedFrameImageMaskSettings.randomMinScale, fixedFrameImageMaskSettings.randomMaxScale, fixedFrameImageMaskSettings.randomLayoutChangeIntervalFrames, fixedFrameImageMaskSettings.randomAllowOverflow, ShouldBoostBlurForCpuPipeline());
                 }
 
                 stopwatch.Stop();
@@ -6162,6 +6731,501 @@ namespace WoLNamesBlackedOut
             _ = RefreshCurrentPreviewFrameIfPausedAsync();
         }
 
+        private string GetImageMaskModeDisplayName(ImageMaskPlacementMode mode)
+        {
+            return mode switch
+            {
+                ImageMaskPlacementMode.Fit => GetLocalizedString("ImageMask.Mode.Fit", "Fit"),
+                ImageMaskPlacementMode.Tile1 => GetLocalizedString("ImageMask.Mode.Tile1", "Tile1"),
+                ImageMaskPlacementMode.Tile2 => GetLocalizedString("ImageMask.Mode.Tile2", "Tile2"),
+                ImageMaskPlacementMode.Random => GetLocalizedString("ImageMask.Mode.Random", "Random"),
+                _ => GetLocalizedString("ImageMask.Mode.Fit", "Fit")
+            };
+        }
+
+        private static ImageMaskPlacementMode ClampImageMaskMode(int value)
+        {
+            return value switch
+            {
+                1 => ImageMaskPlacementMode.Tile1,
+                2 => ImageMaskPlacementMode.Tile2,
+                3 => ImageMaskPlacementMode.Random,
+                _ => ImageMaskPlacementMode.Fit
+            };
+        }
+
+        private static ImageMaskPlacementMode ConvertLegacyImageMaskMode(int value)
+        {
+            return value switch
+            {
+                0 => ImageMaskPlacementMode.Fit,
+                1 => ImageMaskPlacementMode.Tile1,
+                2 => ImageMaskPlacementMode.Random,
+                3 => ImageMaskPlacementMode.Random,
+                _ => ImageMaskPlacementMode.Fit
+            };
+        }
+
+        private static ImageMaskPlacementMode ClampFixedFrameImageMaskMode(int value)
+        {
+            return value switch
+            {
+                1 => ImageMaskPlacementMode.Tile1,
+                2 => ImageMaskPlacementMode.Tile2,
+                _ => ImageMaskPlacementMode.Fit
+            };
+        }
+
+        private static ImageMaskPlacementMode ConvertLegacyFixedFrameImageMaskMode(int value)
+        {
+            return value switch
+            {
+                0 => ImageMaskPlacementMode.Fit,
+                1 => ImageMaskPlacementMode.Tile1,
+                2 => ImageMaskPlacementMode.Tile2,
+                3 => ImageMaskPlacementMode.Tile2,
+                _ => ImageMaskPlacementMode.Fit
+            };
+        }
+
+        private static (float randomMinScale, float randomMaxScale, int randomLayoutChangeIntervalFrames) BuildImageRandomNativeSettings(float minScaleSetting, float maxScaleSetting, int intervalSetting)
+        {
+            float minScale = Math.Clamp(minScaleSetting, 0.3f, 1.0f);
+            float maxScale = Math.Clamp(maxScaleSetting, 1.0f, 5.0f);
+            if (maxScale < minScale)
+            {
+                (minScale, maxScale) = (maxScale, minScale);
+            }
+
+            int randomIntervalFrames = Math.Clamp(intervalSetting, 1, 600);
+            return (minScale, maxScale, randomIntervalFrames);
+        }
+
+        private (int mode, string path, float randomMinScale, float randomMaxScale, int randomLayoutChangeIntervalFrames, bool randomAllowOverflow) GetBlackedOutImageMaskNativeSettings()
+        {
+            var randomSettings = BuildImageRandomNativeSettings(blackedOutImageRandomMinScale, blackedOutImageRandomMaxScale, blackedOutImageRandomLayoutChangeIntervalFrames);
+            return ((int)blackedOutImageMaskMode, ResolveActiveBlackedOutImageMaskPath(), randomSettings.randomMinScale, randomSettings.randomMaxScale, randomSettings.randomLayoutChangeIntervalFrames, blackedOutImageRandomAllowOverflow);
+        }
+
+        private (int mode, string path, float randomMinScale, float randomMaxScale, int randomLayoutChangeIntervalFrames, bool randomAllowOverflow) GetFixedFrameImageMaskNativeSettings()
+        {
+            return ((int)ClampFixedFrameImageMaskMode((int)fixedFrameImageMaskMode), ResolveActiveFixedFrameImageMaskPath(), 0.75f, 2.0f, 90, false);
+        }
+
+        private async Task<StorageFile?> PickImageMaskFileAsync()
+        {
+            var picker = new FileOpenPicker();
+            InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(this));
+            picker.ViewMode = PickerViewMode.Thumbnail;
+            picker.SuggestedStartLocation = PickerLocationId.PicturesLibrary;
+            picker.FileTypeFilter.Add(".png");
+            picker.FileTypeFilter.Add(".jpg");
+            picker.FileTypeFilter.Add(".jpeg");
+            return await picker.PickSingleFileAsync();
+        }
+
+        private async void BlackedOutImageSettingsButton_Click(object sender, RoutedEventArgs e)
+        {
+            bool settingsChanged = false;
+            bool isJapanese = IsJapaneseUiCulture();
+            bool requestSelectImage = false;
+            ContentDialog? settingsDialog = null;
+            var modeCombo = new ComboBox
+            {
+                Header = isJapanese ? "貼り付け方法" : "Placement",
+                Margin = new Thickness(0, 0, 0, 8)
+            };
+            modeCombo.Items.Add(GetImageMaskModeDisplayName(ImageMaskPlacementMode.Fit));
+            modeCombo.Items.Add(GetImageMaskModeDisplayName(ImageMaskPlacementMode.Tile1));
+            modeCombo.Items.Add(GetImageMaskModeDisplayName(ImageMaskPlacementMode.Tile2));
+            modeCombo.Items.Add(GetImageMaskModeDisplayName(ImageMaskPlacementMode.Random));
+            modeCombo.SelectedIndex = (int)blackedOutImageMaskMode;
+
+            var currentImageText = new TextBlock
+            {
+                TextWrapping = TextWrapping.Wrap,
+                Text = ResolveActiveBlackedOutImageMaskPath(),
+                Margin = new Thickness(0, 0, 0, 8)
+            };
+
+            var defaultImageCombo = new ComboBox
+            {
+                Margin = new Thickness(0, 0, 0, 0),
+                MinWidth = 140
+            };
+            defaultImageCombo.Items.Add("01.png");
+            defaultImageCombo.Items.Add("02.png");
+            defaultImageCombo.Items.Add("03.png");
+            defaultImageCombo.Items.Add("04.png");
+            defaultImageCombo.Items.Add("05.png");
+            defaultImageCombo.SelectedItem = selectedDefaultBlackedOutImageMaskFileName;
+
+            var selectButton = new Button
+            {
+                Content = isJapanese ? "画像を選択" : "Select Image"
+            };
+
+            var defaultButton = new Button
+            {
+                Content = isJapanese ? "デフォルトに戻す" : "Use Default"
+            };
+
+            var purchaseInfoText = new TextBlock
+            {
+                Text = isJapanese ? "※カスタム画像の選択は有料アドオンで有効になります。" : "Custom image selection is available via paid add-on.",
+                Opacity = 0.8,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 8, 0, 0)
+            };
+
+            var randomMinScaleSlider = new Slider
+            {
+                Header = isJapanese ? "ランダム最小サイズ (0.3～1.0)" : "Random Min Size (0.3-1.0)",
+                Minimum = 0.3,
+                Maximum = 1.0,
+                StepFrequency = 0.05,
+                SnapsTo = SliderSnapsTo.StepValues,
+                Value = Math.Clamp(blackedOutImageRandomMinScale, 0.3f, 1.0f),
+                Margin = new Thickness(0, 4, 0, 0)
+            };
+
+            var randomMaxScaleSlider = new Slider
+            {
+                Header = isJapanese ? "ランダム最大サイズ (1.0～5.0)" : "Random Max Size (1.0-5.0)",
+                Minimum = 1.0,
+                Maximum = 5.0,
+                StepFrequency = 0.1,
+                SnapsTo = SliderSnapsTo.StepValues,
+                Value = Math.Clamp(blackedOutImageRandomMaxScale, 1.0f, 5.0f),
+                Margin = new Thickness(0, 4, 0, 0)
+            };
+
+            var randomIntervalSlider = new Slider
+            {
+                Header = isJapanese ? "ランダム変更頻度 (フレーム)" : "Random Change Interval (frames)",
+                Minimum = 1,
+                Maximum = 600,
+                StepFrequency = 1,
+                SnapsTo = SliderSnapsTo.StepValues,
+                Value = Math.Clamp(blackedOutImageRandomLayoutChangeIntervalFrames, 1, 600),
+                Margin = new Thickness(0, 4, 0, 0)
+            };
+
+            var randomAllowOverflowCheckBox = new CheckBox
+            {
+                Content = isJapanese ? "ランダムで検出エリアからはみ出し可" : "Allow random image to overflow detection area",
+                IsChecked = blackedOutImageRandomAllowOverflow,
+                Margin = new Thickness(0, 4, 0, 0)
+            };
+
+            var randomSettingsPanel = new StackPanel
+            {
+                Spacing = 4,
+                Children =
+                {
+                    randomMinScaleSlider,
+                    randomMaxScaleSlider,
+                    randomIntervalSlider,
+                    randomAllowOverflowCheckBox
+                }
+            };
+
+            void UpdateRandomSettingsVisibility()
+            {
+                bool isRandom = modeCombo.SelectedIndex == (int)ImageMaskPlacementMode.Random;
+                randomSettingsPanel.Visibility = isRandom ? Visibility.Visible : Visibility.Collapsed;
+            }
+            modeCombo.SelectionChanged += (_, __) => UpdateRandomSettingsVisibility();
+            UpdateRandomSettingsVisibility();
+
+            selectButton.Click += async (_, __) =>
+            {
+                requestSelectImage = true;
+                settingsDialog?.Hide();
+            };
+
+            defaultButton.Click += (_, __) =>
+            {
+                useDefaultBlackedOutImageMask = true;
+                blackedOutImageMaskPath = string.Empty;
+                currentImageText.Text = ResolveActiveBlackedOutImageMaskPath();
+                settingsChanged = true;
+            };
+
+            var imageSectionHeader = new TextBlock
+            {
+                Text = isJapanese ? "デフォルト画像" : "Default Image",
+                Margin = new Thickness(0, 0, 0, 2)
+            };
+
+
+            var imageSelectionRow = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 8,
+                Children =
+                {
+                    defaultImageCombo,
+                    selectButton,
+                    defaultButton
+                }
+            };
+
+            var placementSectionHeader = new TextBlock
+            {
+                Text = isJapanese ? "貼り付け方法" : "Placement",
+                Margin = new Thickness(0, 8, 0, 2)
+            };
+
+            modeCombo.Header = null;
+            modeCombo.Margin = new Thickness(0, 0, 0, 0);
+
+            //var randomSectionHeader = new TextBlock
+            //{
+            //    Text = isJapanese ? "ランダム時のメニュー" : "Random Options",
+            //    Margin = new Thickness(0, 8, 0, 2)
+            //};
+
+            var panel = new StackPanel
+            {
+                Spacing = 6,
+                Children =
+                {
+                    imageSectionHeader,
+                    imageSelectionRow,
+                    purchaseInfoText,
+                    placementSectionHeader,
+                    modeCombo,
+                    //randomSectionHeader,
+                    randomSettingsPanel
+                }
+            };
+
+            settingsDialog = new ContentDialog
+            {
+                Title = isJapanese ? "Imageマスク設定" : "Image Mask Settings",
+                Content = panel,
+                PrimaryButtonText = "OK",
+                CloseButtonText = isJapanese ? "キャンセル" : "Cancel",
+                DefaultButton = ContentDialogButton.Primary,
+                XamlRoot = this.Content.XamlRoot
+            };
+
+            ContentDialogResult dialogResult = await settingsDialog.ShowAsync();
+
+            if (dialogResult == ContentDialogResult.Primary || requestSelectImage)
+            {
+                ImageMaskPlacementMode previousMode = blackedOutImageMaskMode;
+                blackedOutImageMaskMode = ClampImageMaskMode(modeCombo.SelectedIndex);
+                settingsChanged |= previousMode != blackedOutImageMaskMode;
+
+                string previousDefaultImageFileName = selectedDefaultBlackedOutImageMaskFileName;
+                selectedDefaultBlackedOutImageMaskFileName = defaultImageCombo.SelectedItem?.ToString() ?? "01.png";
+                if (selectedDefaultBlackedOutImageMaskFileName is not ("01.png" or "02.png" or "03.png" or "04.png" or "05.png"))
+                {
+                    selectedDefaultBlackedOutImageMaskFileName = "01.png";
+                }
+                settingsChanged |= previousDefaultImageFileName != selectedDefaultBlackedOutImageMaskFileName;
+
+                float previousMinScale = blackedOutImageRandomMinScale;
+                float previousMaxScale = blackedOutImageRandomMaxScale;
+                int previousRandomIntervalFrames = blackedOutImageRandomLayoutChangeIntervalFrames;
+                bool previousRandomAllowOverflow = blackedOutImageRandomAllowOverflow;
+
+                blackedOutImageRandomMinScale = (float)Math.Clamp(randomMinScaleSlider.Value, 0.3, 1.0);
+                blackedOutImageRandomMaxScale = (float)Math.Clamp(randomMaxScaleSlider.Value, 1.0, 5.0);
+                blackedOutImageRandomLayoutChangeIntervalFrames = Math.Clamp((int)Math.Round(randomIntervalSlider.Value), 1, 600);
+                blackedOutImageRandomAllowOverflow = randomAllowOverflowCheckBox.IsChecked == true;
+
+                settingsChanged |= Math.Abs(previousMinScale - blackedOutImageRandomMinScale) > 0.0001f;
+                settingsChanged |= Math.Abs(previousMaxScale - blackedOutImageRandomMaxScale) > 0.0001f;
+                settingsChanged |= previousRandomIntervalFrames != blackedOutImageRandomLayoutChangeIntervalFrames;
+                settingsChanged |= previousRandomAllowOverflow != blackedOutImageRandomAllowOverflow;
+
+                currentImageText.Text = ResolveActiveBlackedOutImageMaskPath();
+
+                if (requestSelectImage)
+                {
+                    bool canUseCustom = await EnsureCustomImageAddonAccessAsync();
+                    if (canUseCustom)
+                    {
+                        var file = await PickImageMaskFileAsync();
+                        if (file != null)
+                        {
+                            blackedOutImageMaskPath = file.Path;
+                            useDefaultBlackedOutImageMask = false;
+                            settingsChanged = true;
+                        }
+                    }
+                }
+
+                if (settingsChanged)
+                {
+                    _ = RefreshMaskSettingPreviewAsync();
+                    _ = RefreshCurrentPreviewFrameIfPausedAsync();
+                }
+            }
+        }
+
+        private async void FixedFrameImageSettingsButton_Click(object sender, RoutedEventArgs e)
+        {
+            bool settingsChanged = false;
+            bool isJapanese = IsJapaneseUiCulture();
+            bool requestSelectImage = false;
+            ContentDialog? settingsDialog = null;
+            var modeCombo = new ComboBox
+            {
+                Header = isJapanese ? "貼り付け方法" : "Placement",
+                Margin = new Thickness(0, 0, 0, 8)
+            };
+            modeCombo.Items.Add(GetImageMaskModeDisplayName(ImageMaskPlacementMode.Fit));
+            modeCombo.Items.Add(GetImageMaskModeDisplayName(ImageMaskPlacementMode.Tile1));
+            modeCombo.Items.Add(GetImageMaskModeDisplayName(ImageMaskPlacementMode.Tile2));
+            modeCombo.SelectedIndex = (int)ClampFixedFrameImageMaskMode((int)fixedFrameImageMaskMode);
+
+            var currentImageText = new TextBlock
+            {
+                TextWrapping = TextWrapping.Wrap,
+                Text = ResolveActiveFixedFrameImageMaskPath(),
+                Margin = new Thickness(0, 0, 0, 8)
+            };
+
+            var defaultImageCombo = new ComboBox
+            {
+                Margin = new Thickness(0, 0, 0, 0),
+                MinWidth = 140
+            };
+            defaultImageCombo.Items.Add("01.png");
+            defaultImageCombo.Items.Add("02.png");
+            defaultImageCombo.Items.Add("03.png");
+            defaultImageCombo.Items.Add("04.png");
+            defaultImageCombo.Items.Add("05.png");
+            defaultImageCombo.SelectedItem = selectedDefaultFixedFrameImageMaskFileName;
+
+            var selectButton = new Button
+            {
+                Content = isJapanese ? "画像を選択" : "Select Image"
+            };
+
+            var defaultButton = new Button
+            {
+                Content = isJapanese ? "デフォルトに戻す" : "Use Default"
+            };
+
+            var purchaseInfoText = new TextBlock
+            {
+                Text = isJapanese ? "※カスタム画像の選択は有料アドオンで有効になります。" : "Custom image selection is available via paid add-on.",
+                Opacity = 0.8,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 8, 0, 0)
+            };
+
+            selectButton.Click += async (_, __) =>
+            {
+                requestSelectImage = true;
+                settingsDialog?.Hide();
+            };
+
+            defaultButton.Click += (_, __) =>
+            {
+                useDefaultFixedFrameImageMask = true;
+                fixedFrameImageMaskPath = string.Empty;
+                currentImageText.Text = ResolveActiveFixedFrameImageMaskPath();
+                settingsChanged = true;
+            };
+
+            var imageSectionHeader = new TextBlock
+            {
+                Text = isJapanese ? "デフォルト画像" : "Default Image",
+                Margin = new Thickness(0, 0, 0, 2)
+            };
+
+            var imageSelectionRow = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 8,
+                Children =
+                {
+                    defaultImageCombo,
+                    selectButton,
+                    defaultButton
+                }
+            };
+
+            var placementSectionHeader = new TextBlock
+            {
+                Text = isJapanese ? "貼り付け方法" : "Placement",
+                Margin = new Thickness(0, 8, 0, 2)
+            };
+
+            modeCombo.Header = null;
+            modeCombo.Margin = new Thickness(0, 0, 0, 0);
+
+            var panel = new StackPanel
+            {
+                Spacing = 6,
+                Children =
+                {
+                    imageSectionHeader,
+                    imageSelectionRow,
+                    purchaseInfoText,
+                    placementSectionHeader,
+                    modeCombo
+                }
+            };
+
+            settingsDialog = new ContentDialog
+            {
+                Title = isJapanese ? "固定枠Imageマスク設定" : "Fixed Frame Image Mask Settings",
+                Content = panel,
+                PrimaryButtonText = "OK",
+                CloseButtonText = isJapanese ? "キャンセル" : "Cancel",
+                DefaultButton = ContentDialogButton.Primary,
+                XamlRoot = this.Content.XamlRoot
+            };
+
+            ContentDialogResult dialogResult = await settingsDialog.ShowAsync();
+
+            if (dialogResult == ContentDialogResult.Primary || requestSelectImage)
+            {
+                ImageMaskPlacementMode previousMode = fixedFrameImageMaskMode;
+                fixedFrameImageMaskMode = ClampFixedFrameImageMaskMode(modeCombo.SelectedIndex);
+                settingsChanged |= previousMode != fixedFrameImageMaskMode;
+
+                string previousDefaultImageFileName = selectedDefaultFixedFrameImageMaskFileName;
+                selectedDefaultFixedFrameImageMaskFileName = defaultImageCombo.SelectedItem?.ToString() ?? "01.png";
+                if (selectedDefaultFixedFrameImageMaskFileName is not ("01.png" or "02.png" or "03.png" or "04.png" or "05.png"))
+                {
+                    selectedDefaultFixedFrameImageMaskFileName = "01.png";
+                }
+                settingsChanged |= previousDefaultImageFileName != selectedDefaultFixedFrameImageMaskFileName;
+
+                currentImageText.Text = ResolveActiveFixedFrameImageMaskPath();
+
+                if (requestSelectImage)
+                {
+                    bool canUseCustom = await EnsureCustomImageAddonAccessAsync();
+                    if (canUseCustom)
+                    {
+                        var file = await PickImageMaskFileAsync();
+                        if (file != null)
+                        {
+                            fixedFrameImageMaskPath = file.Path;
+                            useDefaultFixedFrameImageMask = false;
+                            settingsChanged = true;
+                        }
+                    }
+                }
+
+                if (settingsChanged)
+                {
+                    _ = RefreshMaskSettingPreviewAsync();
+                    _ = RefreshCurrentPreviewFrameIfPausedAsync();
+                    RedrawRectanglesWithNewColor();
+                }
+            }
+        }
+
         private float GetTextSimilarityThreshold()
         {
             return Math.Clamp(textSimilarityPercent, 50, 100) / 100.0f;
@@ -6432,21 +7496,7 @@ namespace WoLNamesBlackedOut
                 ConfigureMaskSliderForType(FixedFrameSlideBar, value, rememberedValue);
                 RememberMaskSliderValue(fixedFrameMaskParamCache, value, FixedFrameSlideBar);
 
-                if (value == "Solid")
-                {
-                    FixedFrame_color.Visibility = Visibility.Visible;
-                    FixedFrameSlideBar.Visibility = Visibility.Collapsed;
-                }
-                else if (IsSliderMaskType(value))
-                {
-                    FixedFrame_color.Visibility = Visibility.Collapsed;
-                    FixedFrameSlideBar.Visibility = Visibility.Visible;
-                }
-                else
-                {
-                    FixedFrame_color.Visibility = Visibility.Collapsed;
-                    FixedFrameSlideBar.Visibility = Visibility.Collapsed;
-                }
+                ApplyFixedFrameMaskControlVisibility(value);
                 RedrawRectanglesWithNewColor();
             }
 

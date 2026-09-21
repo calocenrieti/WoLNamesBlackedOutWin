@@ -67,6 +67,17 @@ public:
         const ColorInfo& color
     );
 
+    void ApplyImageMask(
+        cv::Mat& frame,
+        const std::vector<Detection>& detections,
+        const cv::Mat& image_bgra,
+        int image_mode,
+        float random_min_scale,
+        float random_max_scale,
+        bool random_allow_overflow,
+        int64_t random_layout_seed
+    );
+
     /**
      * @brief 固定矩形に対するマスク処理を実行（in-place）
      * @param frame 処理対象のBGRAフレーム（CV_8UC4）

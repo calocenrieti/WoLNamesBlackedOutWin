@@ -300,4 +300,52 @@
   <data name="Runtime.BlackedOutStop" xml:space="preserve">
     <value> BlackedOut Stop</value>
   </data>
+  <data name="BlackedOutImageSettingsText.Text" xml:space="preserve">
+    <value> Image Settings</value>
+  </data>
+  <data name="FixedFrameImageSettingsText.Text" xml:space="preserve">
+    <value> Image Settings</value>
+  </data>
+  <data name="ImageMask.DialogTitle" xml:space="preserve">
+    <value>Image Mask Settings</value>
+  </data>
+  <data name="ImageMask.PlacementHeader" xml:space="preserve">
+    <value>Placement</value>
+  </data>
+  <data name="ImageMask.Mode.Fit" xml:space="preserve">
+    <value>Fit</value>
+  </data>
+  <data name="ImageMask.Mode.Tile1" xml:space="preserve">
+    <value>Tile1</value>
+  </data>
+  <data name="ImageMask.Mode.Tile2" xml:space="preserve">
+    <value>Tile2</value>
+  </data>
+  <data name="ImageMask.Mode.Random" xml:space="preserve">
+    <value>Random</value>
+  </data>
+  <data name="ImageMask.SelectImageButton" xml:space="preserve">
+    <value>Select Image</value>
+  </data>
+  <data name="ImageMask.UseDefaultButton" xml:space="preserve">
+    <value>Use Default</value>
+  </data>
+  <data name="ImageMask.CustomImageAddonInfo" xml:space="preserve">
+    <value>Custom image selection is available via paid add-on.</value>
+  </data>
+  <data name="ImageMask.RandomAllowOverflow" xml:space="preserve">
+    <value>Allow random image to overflow detection area</value>
+  </data>
+  <data name="ImageMask.PaidAddonTitle" xml:space="preserve">
+    <value>Paid Add-on</value>
+  </data>
+  <data name="ImageMask.PaidAddonPrompt" xml:space="preserve">
+    <value>Custom image selection requires paid add-on. Purchase now?</value>
+  </data>
+  <data name="ImageMask.PurchaseButton" xml:space="preserve">
+    <value>Purchase</value>
+  </data>
+  <data name="Common.Cancel" xml:space="preserve">
+    <value>Cancel</value>
+  </data>
 </root>

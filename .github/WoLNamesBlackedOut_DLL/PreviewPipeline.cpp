@@ -19,6 +19,97 @@ static void LogToFile(const char* msg) {
     OutputDebugStringA(msg);
 }
 
+bool PreviewPipeline::EnsureBlackedOutImageMaskLoaded(const std::wstring& override_path) {
+    const bool cachedCpuReady = !cached_blackedout_image_bgra_.empty();
+    const bool cachedGpuReady = cached_blackedout_image_srv_.Get() != nullptr;
+    if (!override_path.empty() && override_path == blackedout_image_path_loaded_ && (cachedCpuReady || cachedGpuReady)) {
+        return true;
+    }
+
+    cached_blackedout_image_bgra_.release();
+    cached_blackedout_image_texture_.Reset();
+    cached_blackedout_image_srv_.Reset();
+    blackedout_image_path_loaded_.clear();
+
+    std::vector<std::wstring> candidates;
+    auto appendCandidate = [&candidates](const std::wstring& path) {
+        if (path.empty()) {
+            return;
+        }
+        if (std::find(candidates.begin(), candidates.end(), path) == candidates.end()) {
+            candidates.push_back(path);
+        }
+    };
+
+    auto appendFromDir = [&appendCandidate](const std::wstring& dir) {
+        if (dir.empty()) {
+            return;
+        }
+        std::wstring path = dir;
+        if (path.back() != L'\\' && path.back() != L'/') {
+            path += L"\\";
+        }
+        path += L"WoLNamesBlackedOut.png";
+        appendCandidate(path);
+    };
+
+    appendCandidate(override_path);
+    appendCandidate(L"WoLNamesBlackedOut.png");
+
+    wchar_t modulePath[MAX_PATH] = {};
+    if (GetModuleFileNameW(nullptr, modulePath, MAX_PATH) > 0) {
+        std::wstring exePath(modulePath);
+        size_t pos = exePath.find_last_of(L"\\/");
+        if (pos != std::wstring::npos) {
+            appendFromDir(exePath.substr(0, pos + 1));
+        }
+    }
+
+    wchar_t cwd[MAX_PATH] = {};
+    if (GetCurrentDirectoryW(MAX_PATH, cwd) > 0) {
+        appendFromDir(cwd);
+    }
+
+    appendFromDir(L".\\App12\\App12");
+    appendFromDir(L".\\App12");
+
+    for (const auto& imagePath : candidates) {
+        DWORD attrs = GetFileAttributesW(imagePath.c_str());
+        if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_DIRECTORY)) {
+            continue;
+        }
+
+        Microsoft::WRL::ComPtr<ID3D11Texture2D> imageTexture;
+        uint32_t imageWidth = 0;
+        uint32_t imageHeight = 0;
+        if (!LoadImageToTexture(imagePath.c_str(), imageTexture, imageWidth, imageHeight) || !imageTexture.Get() || imageWidth == 0 || imageHeight == 0) {
+            continue;
+        }
+
+        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> imageSrv;
+        if (!device_ || FAILED(device_->CreateShaderResourceView(imageTexture.Get(), nullptr, imageSrv.ReleaseAndGetAddressOf())) || !imageSrv.Get()) {
+            continue;
+        }
+
+        cached_blackedout_image_texture_ = imageTexture;
+        cached_blackedout_image_srv_ = imageSrv;
+
+        if (device_manager_) {
+            cv::Mat cpuBgra(static_cast<int>(imageHeight), static_cast<int>(imageWidth), CV_8UC4);
+            if (device_manager_->ReadTextureToCpuBgra(imageTexture.Get(), cpuBgra.data, imageWidth, imageHeight)) {
+                cached_blackedout_image_bgra_ = cpuBgra;
+            }
+        }
+
+        blackedout_image_path_loaded_ = imagePath;
+        LogToFile("[PreviewPipeline] Loaded image mask\n");
+        return true;
+    }
+
+    LogToFile("[PreviewPipeline] Failed to load image mask from all candidates\n");
+    return false;
+}
+
 static void LogFmt(const char* fmt, ...) {
     char buf[1024] = {};
     va_list args;
@@ -366,6 +457,10 @@ void PreviewPipeline::Cleanup() {
         copyright_srv_.Reset();
         copyright_width_ = 0;
         copyright_height_ = 0;
+        cached_blackedout_image_bgra_.release();
+        cached_blackedout_image_texture_.Reset();
+        cached_blackedout_image_srv_.Reset();
+        blackedout_image_path_loaded_.clear();
         rgba_texture_.Reset();
         output_texture_.Reset();
 
@@ -414,8 +509,13 @@ bool PreviewPipeline::GetFrame(
     const auto maskStart = PreviewClock::now();
 
     if (is_video_) {
+        int randomIntervalFrames = (std::max)(1, mask_params_.blacked_image_random_interval_frames);
+        random_layout_time_bucket_ = frame_index >= 0
+            ? static_cast<int64_t>(frame_index) / randomIntervalFrames
+            : 0;
         result = GetVideoFrame(frame_index);
     } else {
+        random_layout_time_bucket_ = 0;
         result = GetImageFrame();
     }
 
@@ -799,6 +899,7 @@ bool PreviewPipeline::ApplyMask(ID3D11Texture2D* source_texture, uint32_t width,
     // マスク種別を取得
     MaskType blacked_type = static_cast<MaskType>(mask_params_.blacked_type);
     MaskType fixmask_type = static_cast<MaskType>(mask_params_.fixmask_type);
+    bool use_image_mask = blacked_type == MaskType::Image;
 
     std::vector<Detection> active_detections = cached_detections_;
 
@@ -908,13 +1009,54 @@ bool PreviewPipeline::ApplyMask(ID3D11Texture2D* source_texture, uint32_t width,
         }
 
         // 検出箇所マスク適用
-        if (blacked_type != MaskType::No_Inference && !active_detections.empty()) {
+        if (use_image_mask && !active_detections.empty()) {
+            std::wstring imagePath(mask_params_.blacked_image_path);
+            if (EnsureBlackedOutImageMaskLoaded(imagePath) && !cached_blackedout_image_bgra_.empty()) {
+                cpu_postprocessor_.ApplyImageMask(
+                    baseMat,
+                    active_detections,
+                    cached_blackedout_image_bgra_,
+                    mask_params_.blacked_image_mode,
+                    mask_params_.blacked_image_random_min_scale,
+                    mask_params_.blacked_image_random_max_scale,
+                    mask_params_.blacked_image_random_allow_overflow,
+                    random_layout_time_bucket_);
+            }
+        } else if (blacked_type != MaskType::No_Inference && !active_detections.empty()) {
             cpu_postprocessor_.ApplyMask(baseMat, active_detections, blacked_type, mask_params_.blackedout_param, mask_params_.name_color);
         }
 
         // 固定矩形マスク適用
         if (mask_params_.fixed_rect_count > 0) {
-            cpu_postprocessor_.ApplyFixedRects(baseMat, mask_params_.fixed_rects, mask_params_.fixed_rect_count, fixmask_type, mask_params_.fixedFrame_param, mask_params_.fixframe_color);
+            if (fixmask_type == MaskType::Image) {
+                std::vector<Detection> fixedMaskDetections;
+                fixedMaskDetections.reserve(mask_params_.fixed_rect_count);
+                for (int i = 0; i < mask_params_.fixed_rect_count && i < 64; ++i) {
+                    Detection d;
+                    d.class_id = -1;
+                    d.score = 1.0f;
+                    d.x1 = static_cast<float>(mask_params_.fixed_rects[i].x);
+                    d.y1 = static_cast<float>(mask_params_.fixed_rects[i].y);
+                    d.x2 = static_cast<float>(mask_params_.fixed_rects[i].x + mask_params_.fixed_rects[i].width);
+                    d.y2 = static_cast<float>(mask_params_.fixed_rects[i].y + mask_params_.fixed_rects[i].height);
+                    fixedMaskDetections.push_back(d);
+                }
+
+                std::wstring fixedImagePath(mask_params_.fixed_image_path);
+                if (EnsureBlackedOutImageMaskLoaded(fixedImagePath) && !cached_blackedout_image_bgra_.empty()) {
+                    cpu_postprocessor_.ApplyImageMask(
+                        baseMat,
+                        fixedMaskDetections,
+                        cached_blackedout_image_bgra_,
+                        std::clamp(mask_params_.fixed_image_mode, 0, 3),
+                        mask_params_.fixed_image_random_min_scale,
+                        mask_params_.fixed_image_random_max_scale,
+                        mask_params_.fixed_image_random_allow_overflow,
+                        random_layout_time_bucket_);
+                }
+            } else {
+                cpu_postprocessor_.ApplyFixedRects(baseMat, mask_params_.fixed_rects, mask_params_.fixed_rect_count, fixmask_type, mask_params_.fixedFrame_param, mask_params_.fixframe_color);
+            }
         }
 
         // 透かし合成
@@ -1016,6 +1158,51 @@ bool PreviewPipeline::ApplyMask(ID3D11Texture2D* source_texture, uint32_t width,
             case MaskType::Blur:
                 detection_result = mask_shader_.ApplyBlur(source_texture, detection_mask.Get(), mask_params_.blackedout_param, detection_output);
                 break;
+            case MaskType::Image: {
+                std::wstring imagePath(mask_params_.blacked_image_path);
+                int imageMode = std::clamp(mask_params_.blacked_image_mode, 0, 3);
+                if (EnsureBlackedOutImageMaskLoaded(imagePath)) {
+                    if (imageMode == 3 && !cached_blackedout_image_bgra_.empty()) {
+                        cv::Mat cpuFrame(static_cast<int>(height), static_cast<int>(width), CV_8UC4);
+                        if (device_manager_->ReadTextureToCpuBgra(source_texture, cpuFrame.data, width, height)) {
+                            cpu_postprocessor_.ApplyImageMask(
+                                cpuFrame,
+                                active_detections,
+                                cached_blackedout_image_bgra_,
+                                imageMode,
+                                mask_params_.blacked_image_random_min_scale,
+                                mask_params_.blacked_image_random_max_scale,
+                                mask_params_.blacked_image_random_allow_overflow,
+                                random_layout_time_bucket_);
+
+                            D3D11_TEXTURE2D_DESC desc = {};
+                            source_texture->GetDesc(&desc);
+                            desc.Usage = D3D11_USAGE_DEFAULT;
+                            desc.CPUAccessFlags = 0;
+                            desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+                            desc.MiscFlags = 0;
+
+                            if (SUCCEEDED(device_->CreateTexture2D(&desc, nullptr, detection_output.ReleaseAndGetAddressOf()))
+                                && detection_output.Get()
+                                && device_manager_->WriteCpuBgraToTexture(cpuFrame.data, width, height, detection_output.Get())) {
+                                detection_result = true;
+                            }
+                        }
+                    } else if (cached_blackedout_image_srv_.Get()) {
+                        detection_result = mask_shader_.ApplyImageMask(
+                            source_texture,
+                            cached_blackedout_image_srv_.Get(),
+                            active_detections,
+                            imageMode,
+                            mask_params_.blacked_image_random_min_scale,
+                            mask_params_.blacked_image_random_max_scale,
+                            mask_params_.blacked_image_random_allow_overflow,
+                            random_layout_time_bucket_,
+                            detection_output);
+                    }
+                }
+                break;
+            }
             case MaskType::RectFill:
             default: {
                 float color[4] = {
@@ -1048,6 +1235,51 @@ bool PreviewPipeline::ApplyMask(ID3D11Texture2D* source_texture, uint32_t width,
             case MaskType::Blur:
                 fixed_result = mask_shader_.ApplyBlur(source_texture, fixed_mask.Get(), mask_params_.fixedFrame_param, fixed_output);
                 break;
+            case MaskType::Image: {
+                std::wstring imagePath(mask_params_.fixed_image_path);
+                int imageMode = std::clamp(mask_params_.fixed_image_mode, 0, 3);
+                if (EnsureBlackedOutImageMaskLoaded(imagePath)) {
+                    if (imageMode == 3 && !cached_blackedout_image_bgra_.empty()) {
+                        cv::Mat cpuFrame(static_cast<int>(height), static_cast<int>(width), CV_8UC4);
+                        if (device_manager_->ReadTextureToCpuBgra(source_texture, cpuFrame.data, width, height)) {
+                            cpu_postprocessor_.ApplyImageMask(
+                                cpuFrame,
+                                fixed_detections,
+                                cached_blackedout_image_bgra_,
+                                imageMode,
+                                mask_params_.fixed_image_random_min_scale,
+                                mask_params_.fixed_image_random_max_scale,
+                                mask_params_.fixed_image_random_allow_overflow,
+                                random_layout_time_bucket_);
+
+                            D3D11_TEXTURE2D_DESC desc = {};
+                            source_texture->GetDesc(&desc);
+                            desc.Usage = D3D11_USAGE_DEFAULT;
+                            desc.CPUAccessFlags = 0;
+                            desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+                            desc.MiscFlags = 0;
+
+                            if (SUCCEEDED(device_->CreateTexture2D(&desc, nullptr, fixed_output.ReleaseAndGetAddressOf()))
+                                && fixed_output.Get()
+                                && device_manager_->WriteCpuBgraToTexture(cpuFrame.data, width, height, fixed_output.Get())) {
+                                fixed_result = true;
+                            }
+                        }
+                    } else if (cached_blackedout_image_srv_.Get()) {
+                        fixed_result = mask_shader_.ApplyImageMask(
+                            source_texture,
+                            cached_blackedout_image_srv_.Get(),
+                            fixed_detections,
+                            imageMode,
+                            mask_params_.fixed_image_random_min_scale,
+                            mask_params_.fixed_image_random_max_scale,
+                            mask_params_.fixed_image_random_allow_overflow,
+                            random_layout_time_bucket_,
+                            fixed_output);
+                    }
+                }
+                break;
+            }
             case MaskType::RectFill:
             default: {
                 float color[4] = {
@@ -1214,6 +1446,7 @@ bool PreviewPipeline::EnsureCopyrightWatermarkLoaded(const std::wstring& overrid
 void PreviewPipeline::UpdateMaskParams(const PreviewMaskParams& params) {
     std::lock_guard<std::mutex> lock(params_mutex_);
     memcpy(&mask_params_, &params, sizeof(PreviewMaskParams));
+    random_layout_time_bucket_ = -1;
 }
 
 void PreviewPipeline::SetCopyrightOffset(int offset_x, int offset_y) {

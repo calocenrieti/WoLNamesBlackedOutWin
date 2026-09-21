@@ -820,6 +820,10 @@ void VideoPipeline::Cleanup() {
 		copyright_texture_.Reset();
 		copyright_width_ = 0;
 		copyright_height_ = 0;
+		cached_blackedout_image_bgra_.release();
+		cached_blackedout_image_texture_.Reset();
+		cached_blackedout_image_srv_.Reset();
+		blackedout_image_path_loaded_.clear();
 		tracker_.reset();
 		{
 			std::lock_guard<std::mutex> lock(ocr_result_mutex_);
@@ -1386,58 +1390,105 @@ void VideoPipeline::InferenceThread() {
 							// CPU/OpenCV パス: テクスチャをCPU Matに読み出し、マスク適用後にGPUテクスチャへ書き戻す
 							cv::Mat cpu_frame(frame.height, frame.width, CV_8UC4);
 							if (device_manager_.ReadTextureToCpuBgra(current_texture.Get(), cpu_frame.data, frame.width, frame.height)) {
-								cpu_postprocessor_.ApplyMask(cpu_frame, mask_detections, config_.blacked_type, config_.blackedout_param, config_.name_color);
+								if (config_.blacked_type == MaskType::Image) {
+									if (EnsureBlackedOutImageMaskLoaded() && !cached_blackedout_image_bgra_.empty()) {
+										cpu_postprocessor_.ApplyImageMask(
+											cpu_frame,
+											mask_detections,
+											cached_blackedout_image_bgra_,
+											std::clamp(config_.blacked_image_mode, 0, 3),
+											config_.blacked_image_random_min_scale,
+											config_.blacked_image_random_max_scale,
+											config_.blacked_image_random_allow_overflow,
+											static_cast<int64_t>(loop_count) / (std::max)(1, config_.blacked_image_random_interval_frames));
+									}
+								} else {
+									cpu_postprocessor_.ApplyMask(cpu_frame, mask_detections, config_.blacked_type, config_.blackedout_param, config_.name_color);
+								}
 								device_manager_.WriteCpuBgraToTexture(cpu_frame.data, frame.width, frame.height, current_texture.Get());
 							}
 						} else {
 							// GPU マスクシェーダー パス
-							auto mask_texture = mask_shader_.CreateMaskTexture(
-								frame.width,
-								frame.height,
-								mask_detections
-							);
-
-							if (mask_texture.Get()) {
-								Microsoft::WRL::ComPtr<ID3D11Texture2D> output_texture;
-								if (config_.blacked_type == MaskType::Mosaic) {
-									mask_shader_.ApplyMosaic(
-										current_texture.Get(),
-										mask_texture.Get(),
-										mosaic_size_,
-										output_texture
-									);
-								} else if (config_.blacked_type == MaskType::Blur) {
-									mask_shader_.ApplyBlur(
-										current_texture.Get(),
-										mask_texture.Get(),
-										blur_radius_,
-										output_texture
-									);
-								} else if (config_.blacked_type == MaskType::Inpaint) {
-									mask_shader_.ApplyInpaint(
-										current_texture.Get(),
-										mask_texture.Get(),
-										config_.blackedout_param,
-										output_texture
-									);
-								} else {
-									float color[4] = {
-										config_.name_color.r / 255.0f,
-										config_.name_color.g / 255.0f,
-										config_.name_color.b / 255.0f,
-										1.0f
-									};
-									mask_shader_.ApplyRectFill(
-										current_texture.Get(),
-										mask_texture.Get(),
-										color,
-										output_texture
-									);
+							Microsoft::WRL::ComPtr<ID3D11Texture2D> output_texture;
+							if (config_.blacked_type == MaskType::Image) {
+								int imageMode = std::clamp(config_.blacked_image_mode, 0, 3);
+								if (EnsureBlackedOutImageMaskLoaded()) {
+									if (imageMode == 3 && !cached_blackedout_image_bgra_.empty()) {
+										cv::Mat cpu_frame(frame.height, frame.width, CV_8UC4);
+										if (device_manager_.ReadTextureToCpuBgra(current_texture.Get(), cpu_frame.data, frame.width, frame.height)) {
+											cpu_postprocessor_.ApplyImageMask(
+												cpu_frame,
+												mask_detections,
+												cached_blackedout_image_bgra_,
+												imageMode,
+												config_.blacked_image_random_min_scale,
+												config_.blacked_image_random_max_scale,
+												config_.blacked_image_random_allow_overflow,
+												static_cast<int64_t>(loop_count) / (std::max)(1, config_.blacked_image_random_interval_frames));
+											device_manager_.WriteCpuBgraToTexture(cpu_frame.data, frame.width, frame.height, current_texture.Get());
+											output_texture = current_texture;
+										}
+									} else if (cached_blackedout_image_srv_.Get()) {
+										mask_shader_.ApplyImageMask(
+											current_texture.Get(),
+											cached_blackedout_image_srv_.Get(),
+											mask_detections,
+											imageMode,
+											config_.blacked_image_random_min_scale,
+											config_.blacked_image_random_max_scale,
+											config_.blacked_image_random_allow_overflow,
+											static_cast<int64_t>(loop_count) / (std::max)(1, config_.blacked_image_random_interval_frames),
+											output_texture);
+									}
 								}
+							} else {
+								auto mask_texture = mask_shader_.CreateMaskTexture(
+									frame.width,
+									frame.height,
+									mask_detections
+								);
 
-								if (output_texture.Get()) {
-									current_texture = output_texture;
+								if (mask_texture.Get()) {
+									if (config_.blacked_type == MaskType::Mosaic) {
+										mask_shader_.ApplyMosaic(
+											current_texture.Get(),
+											mask_texture.Get(),
+											mosaic_size_,
+											output_texture
+										);
+									} else if (config_.blacked_type == MaskType::Blur) {
+										mask_shader_.ApplyBlur(
+											current_texture.Get(),
+											mask_texture.Get(),
+											blur_radius_,
+											output_texture
+										);
+									} else if (config_.blacked_type == MaskType::Inpaint) {
+										mask_shader_.ApplyInpaint(
+											current_texture.Get(),
+											mask_texture.Get(),
+											config_.blackedout_param,
+											output_texture
+										);
+									} else {
+										float color[4] = {
+											config_.name_color.r / 255.0f,
+											config_.name_color.g / 255.0f,
+											config_.name_color.b / 255.0f,
+											1.0f
+										};
+										mask_shader_.ApplyRectFill(
+											current_texture.Get(),
+											mask_texture.Get(),
+											color,
+											output_texture
+										);
+									}
 								}
+							}
+
+							if (output_texture.Get()) {
+								current_texture = output_texture;
 							}
 						}
 					}
@@ -1452,28 +1503,43 @@ void VideoPipeline::InferenceThread() {
 
 		// 固定矩形マスクを適用
 		if (config_.fixed_rect_count > 0 && current_texture.Get()) {
+			std::vector<Detection> fixed_detections;
+			fixed_detections.reserve(config_.fixed_rect_count);
+			for (int i = 0; i < config_.fixed_rect_count && i < 64; ++i) {
+				const auto& rect = config_.fixed_rects[i];
+				if (rect.width < 10 || rect.height < 10) continue;
+				Detection d;
+				d.class_id = -1;
+				d.score = 1.0f;
+				d.x1 = static_cast<float>(rect.x);
+				d.y1 = static_cast<float>(rect.y);
+				d.x2 = static_cast<float>(rect.x + rect.width);
+				d.y2 = static_cast<float>(rect.y + rect.height);
+				fixed_detections.push_back(d);
+			}
+
 			if (use_cpu_pipeline_) {
 				cv::Mat cpu_frame(frame.height, frame.width, CV_8UC4);
 				if (device_manager_.ReadTextureToCpuBgra(current_texture.Get(), cpu_frame.data, frame.width, frame.height)) {
-					cpu_postprocessor_.ApplyFixedRects(cpu_frame, config_.fixed_rects, config_.fixed_rect_count, config_.fixmask_type, config_.fixmask_param, config_.fixframe_color);
+					if (config_.fixmask_type == MaskType::Image && !fixed_detections.empty()) {
+						std::wstring fixedImagePath = config_.fixed_image_path ? config_.fixed_image_path : L"";
+						if (EnsureBlackedOutImageMaskLoaded(fixedImagePath) && !cached_blackedout_image_bgra_.empty()) {
+							cpu_postprocessor_.ApplyImageMask(
+								cpu_frame,
+								fixed_detections,
+								cached_blackedout_image_bgra_,
+								std::clamp(config_.fixed_image_mode, 0, 3),
+								config_.fixed_image_random_min_scale,
+								config_.fixed_image_random_max_scale,
+								config_.fixed_image_random_allow_overflow,
+								static_cast<int64_t>(loop_count) / (std::max)(1, (config_.fixed_image_random_interval_frames > 0 ? config_.fixed_image_random_interval_frames : 90)));
+						}
+					} else {
+						cpu_postprocessor_.ApplyFixedRects(cpu_frame, config_.fixed_rects, config_.fixed_rect_count, config_.fixmask_type, config_.fixmask_param, config_.fixframe_color);
+					}
 					device_manager_.WriteCpuBgraToTexture(cpu_frame.data, frame.width, frame.height, current_texture.Get());
 				}
 			} else {
-				std::vector<Detection> fixed_detections;
-				fixed_detections.reserve(config_.fixed_rect_count);
-				for (int i = 0; i < config_.fixed_rect_count && i < 64; ++i) {
-					const auto& rect = config_.fixed_rects[i];
-					if (rect.width < 10 || rect.height < 10) continue;
-					Detection d;
-					d.class_id = -1;
-					d.score = 1.0f;
-					d.x1 = static_cast<float>(rect.x);
-					d.y1 = static_cast<float>(rect.y);
-					d.x2 = static_cast<float>(rect.x + rect.width);
-					d.y2 = static_cast<float>(rect.y + rect.height);
-					fixed_detections.push_back(d);
-				}
-
 				if (!fixed_detections.empty()) {
 					auto fixed_mask = mask_shader_.CreateMaskTexture(frame.width, frame.height, fixed_detections);
 					if (fixed_mask.Get()) {
@@ -1489,6 +1555,41 @@ void VideoPipeline::InferenceThread() {
 							case MaskType::Blur:
 								fixed_result = mask_shader_.ApplyBlur(current_texture.Get(), fixed_mask.Get(), config_.fixmask_param, fixed_output);
 								break;
+							case MaskType::Image: {
+								std::wstring fixedImagePath = config_.fixed_image_path ? config_.fixed_image_path : L"";
+								int imageMode = std::clamp(config_.fixed_image_mode, 0, 3);
+								if (EnsureBlackedOutImageMaskLoaded(fixedImagePath)) {
+									if (imageMode == 3 && !cached_blackedout_image_bgra_.empty()) {
+										cv::Mat cpu_frame(frame.height, frame.width, CV_8UC4);
+										if (device_manager_.ReadTextureToCpuBgra(current_texture.Get(), cpu_frame.data, frame.width, frame.height)) {
+											cpu_postprocessor_.ApplyImageMask(
+												cpu_frame,
+												fixed_detections,
+												cached_blackedout_image_bgra_,
+												imageMode,
+												config_.fixed_image_random_min_scale,
+												config_.fixed_image_random_max_scale,
+												config_.fixed_image_random_allow_overflow,
+												static_cast<int64_t>(loop_count) / (std::max)(1, (config_.fixed_image_random_interval_frames > 0 ? config_.fixed_image_random_interval_frames : 90)));
+											device_manager_.WriteCpuBgraToTexture(cpu_frame.data, frame.width, frame.height, current_texture.Get());
+											fixed_output = current_texture;
+											fixed_result = true;
+										}
+									} else if (cached_blackedout_image_srv_.Get()) {
+										fixed_result = mask_shader_.ApplyImageMask(
+											current_texture.Get(),
+											cached_blackedout_image_srv_.Get(),
+											fixed_detections,
+											imageMode,
+											config_.fixed_image_random_min_scale,
+											config_.fixed_image_random_max_scale,
+											config_.fixed_image_random_allow_overflow,
+											static_cast<int64_t>(loop_count) / (std::max)(1, (config_.fixed_image_random_interval_frames > 0 ? config_.fixed_image_random_interval_frames : 90)),
+											fixed_output);
+									}
+								}
+								break;
+							}
 							case MaskType::RectFill:
 							default: {
 								float color[4] = {
@@ -2676,6 +2777,100 @@ bool VideoPipeline::EnsureCopyrightWatermarkLoaded() {
 	}
 
 	return true;
+}
+
+bool VideoPipeline::EnsureBlackedOutImageMaskLoaded(const std::wstring& preferredOverride) {
+	std::wstring preferred = preferredOverride;
+	if (preferred.empty() && config_.blacked_image_path && config_.blacked_image_path[0] != L'\0') {
+		preferred = config_.blacked_image_path;
+	}
+
+	const bool cachedCpuReady = !cached_blackedout_image_bgra_.empty();
+	const bool cachedGpuReady = cached_blackedout_image_srv_.Get() != nullptr;
+	if (!preferred.empty() && preferred == blackedout_image_path_loaded_ && (cachedCpuReady || cachedGpuReady)) {
+		return true;
+	}
+
+	cached_blackedout_image_bgra_.release();
+	cached_blackedout_image_texture_.Reset();
+	cached_blackedout_image_srv_.Reset();
+	blackedout_image_path_loaded_.clear();
+
+	std::vector<std::wstring> candidates;
+	auto appendCandidate = [&candidates](const std::wstring& path) {
+		if (path.empty()) {
+			return;
+		}
+		if (std::find(candidates.begin(), candidates.end(), path) == candidates.end()) {
+			candidates.push_back(path);
+		}
+	};
+
+	auto appendFromDir = [&appendCandidate](const std::wstring& dir) {
+		if (dir.empty()) {
+			return;
+		}
+		std::wstring path = dir;
+		if (path.back() != L'\\' && path.back() != L'/') {
+			path += L"\\";
+		}
+		path += L"WoLNamesBlackedOut.png";
+		appendCandidate(path);
+	};
+
+	appendCandidate(preferred);
+	appendCandidate(L"WoLNamesBlackedOut.png");
+
+	wchar_t modulePath[MAX_PATH] = {};
+	if (GetModuleFileNameW(nullptr, modulePath, MAX_PATH) > 0) {
+		std::wstring exePath(modulePath);
+		size_t pos = exePath.find_last_of(L"\\/");
+		if (pos != std::wstring::npos) {
+			appendFromDir(exePath.substr(0, pos + 1));
+		}
+	}
+
+	wchar_t cwd[MAX_PATH] = {};
+	if (GetCurrentDirectoryW(MAX_PATH, cwd) > 0) {
+		appendFromDir(cwd);
+	}
+
+	appendFromDir(L".\\App12\\App12");
+	appendFromDir(L".\\App12");
+
+	for (const auto& imagePath : candidates) {
+		DWORD attrs = GetFileAttributesW(imagePath.c_str());
+		if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_DIRECTORY)) {
+			continue;
+		}
+
+		Microsoft::WRL::ComPtr<ID3D11Texture2D> imageTexture;
+		uint32_t imageWidth = 0;
+		uint32_t imageHeight = 0;
+		if (!LoadImageToTexture(imagePath.c_str(), imageTexture, imageWidth, imageHeight) || !imageTexture.Get() || imageWidth == 0 || imageHeight == 0) {
+			continue;
+		}
+
+		Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> imageSrv;
+		if (FAILED(device_manager_.GetDevice()->CreateShaderResourceView(imageTexture.Get(), nullptr, imageSrv.ReleaseAndGetAddressOf())) || !imageSrv.Get()) {
+			continue;
+		}
+
+		cached_blackedout_image_texture_ = imageTexture;
+		cached_blackedout_image_srv_ = imageSrv;
+
+		cv::Mat cpuBgra(static_cast<int>(imageHeight), static_cast<int>(imageWidth), CV_8UC4);
+		if (device_manager_.ReadTextureToCpuBgra(imageTexture.Get(), cpuBgra.data, imageWidth, imageHeight)) {
+			cached_blackedout_image_bgra_ = cpuBgra;
+		}
+
+		blackedout_image_path_loaded_ = imagePath;
+		PipelineLogFmt("[VideoPipeline] Loaded image mask: %ls (%ux%u)\n", imagePath.c_str(), imageWidth, imageHeight);
+		return true;
+	}
+
+	PipelineLog("[VideoPipeline] Failed to load image mask from all candidates\n");
+	return false;
 }
 
 std::vector<Detection> VideoPipeline::PostProcessDetections(

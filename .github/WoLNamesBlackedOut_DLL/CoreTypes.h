@@ -112,7 +112,8 @@ namespace WoLNamesBlackedOut::Core {
 		Mosaic = 1,
 		Blur = 2,
 		RectFill = 3,
-		No_Inference = 4
+		No_Inference = 4,
+		Image = 5
 	};
 
 	/**
@@ -145,6 +146,12 @@ namespace WoLNamesBlackedOut::Core {
 		// マスク設定（検出箇所）
 		MaskType blacked_type;
 		int blackedout_param;
+		int blacked_image_mode;
+		const wchar_t* blacked_image_path;
+		float blacked_image_random_min_scale;
+		float blacked_image_random_max_scale;
+		int blacked_image_random_interval_frames;
+		bool blacked_image_random_allow_overflow;
 		// マスク色（単色塗りつぶし時）
 		ColorInfo name_color;
 		ColorInfo fixframe_color;
@@ -152,6 +159,12 @@ namespace WoLNamesBlackedOut::Core {
 		// 固定矩形マスク設定
 		MaskType fixmask_type;
 		int fixmask_param;
+		int fixed_image_mode;
+		const wchar_t* fixed_image_path;
+		float fixed_image_random_min_scale;
+		float fixed_image_random_max_scale;
+		int fixed_image_random_interval_frames;
+		bool fixed_image_random_allow_overflow;
 
 		// 固定矩形データ（InitializePipelineからコピー）
 		int fixed_rect_count;
@@ -186,8 +199,16 @@ namespace WoLNamesBlackedOut::Core {
 			  encoder_type(HwEncoderType::Auto), bitrate(5'000'000), fps(30), for_x(false), disable_audio(false),
 			  trim_start_seconds(0.0), trim_end_seconds(0.0),
 			  blacked_type(MaskType::RectFill), blackedout_param(3),
+			  blacked_image_mode(0), blacked_image_path(nullptr),
+			  blacked_image_random_min_scale(0.75f), blacked_image_random_max_scale(2.0f),
+			  blacked_image_random_interval_frames(90),
+			  blacked_image_random_allow_overflow(false),
 			  name_color(), fixframe_color(),
 			  fixmask_type(MaskType::RectFill), fixmask_param(3),
+			  fixed_image_mode(0), fixed_image_path(nullptr),
+			  fixed_image_random_min_scale(0.75f), fixed_image_random_max_scale(2.0f),
+			  fixed_image_random_interval_frames(90),
+			  fixed_image_random_allow_overflow(false),
 			  fixed_rect_count(0),
 			  crop_top(0), crop_left(0), crop_right(0), crop_bottom(0),
 			  enable_copyright(false), copyright_image_path(nullptr),
@@ -301,7 +322,7 @@ struct PreviewParams {
  */
 struct PreviewMaskParams {
     // 検出箇所マスク設定
-    int blacked_type;                // 0=Inpaint, 1=Mosaic, 2=Blur, 3=RectFill, 4=No_Inference
+	int blacked_type;                // 0=Inpaint, 1=Mosaic, 2=Blur, 3=RectFill, 4=No_Inference, 5=Image
     ColorInfo name_color;            // マスク色（RectFill時）
     int blackedout_param;            // Mosaic/Blurパラメータ
 
@@ -326,7 +347,19 @@ struct PreviewMaskParams {
 	int ocr_max_rois_per_frame;     // 1-32
 	float text_similarity_threshold; // 0.50f - 1.00f
 	wchar_t mask_exclude_text_csv[512];
+	int blacked_image_mode; // 0=Fit,1=Tile1,2=Tile2,3=Random
+	wchar_t blacked_image_path[512];
+	float blacked_image_random_min_scale;
+	float blacked_image_random_max_scale;
+	int blacked_image_random_interval_frames;
+	bool blacked_image_random_allow_overflow;
+	int fixed_image_mode; // 0=Fit,1=Tile1,2=Tile2,3=Random
+	wchar_t fixed_image_path[512];
+	float fixed_image_random_min_scale;
+	float fixed_image_random_max_scale;
+	int fixed_image_random_interval_frames;
+	bool fixed_image_random_allow_overflow;
 
-    // 予約領域（将来拡張用）
+	// 予約領域（将来拡張用）
 	int reserved[4];
 };
