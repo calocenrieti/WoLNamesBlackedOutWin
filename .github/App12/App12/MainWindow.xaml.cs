@@ -176,22 +176,114 @@ namespace WoLNamesBlackedOut
 
         private sealed class CustomImageAddonService
         {
-            private readonly string storeId;
+            private readonly string storeIdOrToken;
+            private readonly Func<nint>? windowHandleProvider;
+            private string? resolvedStoreId;
+            private bool purchaseConfirmedInSession;
 
-            public CustomImageAddonService(string storeId)
+            public CustomImageAddonService(string storeIdOrToken, Func<nint>? windowHandleProvider)
             {
-                this.storeId = storeId;
+                this.storeIdOrToken = storeIdOrToken;
+                this.windowHandleProvider = windowHandleProvider;
+            }
+
+            private StoreContext CreateStoreContext()
+            {
+                StoreContext context = StoreContext.GetDefault();
+
+                try
+                {
+                    nint hwnd = windowHandleProvider?.Invoke() ?? 0;
+                    if (hwnd != 0)
+                    {
+                        InitializeWithWindow.Initialize(context, hwnd);
+                    }
+                }
+                catch
+                {
+                }
+
+                return context;
+            }
+
+            private static bool LooksLikeStoreId(string value)
+            {
+                return !string.IsNullOrWhiteSpace(value) && value.StartsWith("9", StringComparison.OrdinalIgnoreCase);
+            }
+
+            private async Task<string?> ResolveStoreIdAsync(StoreContext context)
+            {
+                if (!string.IsNullOrWhiteSpace(resolvedStoreId))
+                {
+                    return resolvedStoreId;
+                }
+
+                if (LooksLikeStoreId(storeIdOrToken))
+                {
+                    resolvedStoreId = storeIdOrToken;
+                    return resolvedStoreId;
+                }
+
+                try
+                {
+                    StoreProductQueryResult queryResult = await context.GetAssociatedStoreProductsAsync(["Durable"]);
+                    if (queryResult?.Products != null)
+                    {
+                        foreach (StoreProduct product in queryResult.Products.Values)
+                        {
+                            if (string.Equals(product.StoreId, storeIdOrToken, StringComparison.OrdinalIgnoreCase)
+                                || string.Equals(product.InAppOfferToken, storeIdOrToken, StringComparison.OrdinalIgnoreCase))
+                            {
+                                resolvedStoreId = product.StoreId;
+                                return resolvedStoreId;
+                            }
+                        }
+                    }
+                }
+                catch
+                {
+                }
+
+                return null;
             }
 
             public async Task<bool> IsPurchasedAsync()
             {
+                if (purchaseConfirmedInSession)
+                {
+                    return true;
+                }
+
                 try
                 {
-                    StoreContext context = StoreContext.GetDefault();
+                    StoreContext context = CreateStoreContext();
+                    string? effectiveStoreId = await ResolveStoreIdAsync(context);
+
                     StoreAppLicense appLicense = await context.GetAppLicenseAsync();
-                    if (appLicense.AddOnLicenses.TryGetValue(storeId, out StoreLicense? license))
+                    if (!string.IsNullOrWhiteSpace(effectiveStoreId)
+                        && appLicense.AddOnLicenses.TryGetValue(effectiveStoreId, out StoreLicense? license)
+                        && license.IsActive)
                     {
-                        return license.IsActive;
+                        purchaseConfirmedInSession = true;
+                        return true;
+                    }
+
+                    StoreProductQueryResult userCollectionResult = await context.GetUserCollectionAsync(["Durable"]);
+                    if (userCollectionResult?.Products != null)
+                    {
+                        foreach (StoreProduct product in userCollectionResult.Products.Values)
+                        {
+                            bool idMatched =
+                                (!string.IsNullOrWhiteSpace(effectiveStoreId) && string.Equals(product.StoreId, effectiveStoreId, StringComparison.OrdinalIgnoreCase))
+                                || string.Equals(product.StoreId, storeIdOrToken, StringComparison.OrdinalIgnoreCase)
+                                || string.Equals(product.InAppOfferToken, storeIdOrToken, StringComparison.OrdinalIgnoreCase);
+
+                            if (idMatched && product.IsInUserCollection)
+                            {
+                                purchaseConfirmedInSession = true;
+                                return true;
+                            }
+                        }
                     }
                 }
                 catch
@@ -205,14 +297,36 @@ namespace WoLNamesBlackedOut
             {
                 try
                 {
-                    StoreContext context = StoreContext.GetDefault();
-                    StorePurchaseResult result = await context.RequestPurchaseAsync(storeId);
-                    return result.Status == StorePurchaseStatus.Succeeded || result.Status == StorePurchaseStatus.AlreadyPurchased;
+                    StoreContext context = CreateStoreContext();
+                    string? effectiveStoreId = await ResolveStoreIdAsync(context);
+
+                    if (!string.IsNullOrWhiteSpace(effectiveStoreId))
+                    {
+                        StorePurchaseResult resolvedResult = await context.RequestPurchaseAsync(effectiveStoreId);
+                        if (resolvedResult.Status == StorePurchaseStatus.Succeeded || resolvedResult.Status == StorePurchaseStatus.AlreadyPurchased)
+                        {
+                            purchaseConfirmedInSession = true;
+                            return true;
+                        }
+                    }
+
+                    if (!string.Equals(effectiveStoreId, storeIdOrToken, StringComparison.OrdinalIgnoreCase))
+                    {
+                        StorePurchaseResult fallbackResult = await context.RequestPurchaseAsync(storeIdOrToken);
+                        bool purchased = fallbackResult.Status == StorePurchaseStatus.Succeeded || fallbackResult.Status == StorePurchaseStatus.AlreadyPurchased;
+                        if (purchased)
+                        {
+                            purchaseConfirmedInSession = true;
+                        }
+
+                        return purchased;
+                    }
                 }
                 catch
                 {
-                    return false;
                 }
+
+                return false;
             }
         }
 
@@ -1193,6 +1307,34 @@ namespace WoLNamesBlackedOut
                 ? selectedDefaultFileName
                 : "01.png";
 
+            string packageInstalledLocation = string.Empty;
+            try
+            {
+                packageInstalledLocation = Package.Current.InstalledLocation.Path;
+            }
+            catch
+            {
+            }
+
+            string executableDirectory = string.Empty;
+            try
+            {
+                executableDirectory = System.IO.Path.GetDirectoryName(Environment.ProcessPath ?? string.Empty) ?? string.Empty;
+            }
+            catch
+            {
+            }
+
+            List<string> searchRoots =
+            [
+                AppContext.BaseDirectory,
+                Environment.CurrentDirectory,
+                executableDirectory,
+                packageInstalledLocation,
+                //System.IO.Path.Combine(AppContext.BaseDirectory, "App12"),
+                //System.IO.Path.Combine(AppContext.BaseDirectory, "App12", "App12")
+            ];
+
             string[] defaultFileCandidates =
             [
                 safeDefaultFileName,
@@ -1202,16 +1344,14 @@ namespace WoLNamesBlackedOut
 
             foreach (string defaultFile in defaultFileCandidates)
             {
-                var namedCandidates = new[]
+                foreach (string root in searchRoots)
                 {
-                    System.IO.Path.Combine(AppContext.BaseDirectory, defaultFile),
-                    System.IO.Path.Combine(Environment.CurrentDirectory, defaultFile),
-                    System.IO.Path.Combine(AppContext.BaseDirectory, "App12", defaultFile),
-                    System.IO.Path.Combine(AppContext.BaseDirectory, "App12", "App12", defaultFile)
-                };
+                    if (string.IsNullOrWhiteSpace(root))
+                    {
+                        continue;
+                    }
 
-                foreach (string candidate in namedCandidates)
-                {
+                    string candidate = System.IO.Path.Combine(root, defaultFile);
                     if (File.Exists(candidate))
                     {
                         return candidate;
@@ -1219,23 +1359,7 @@ namespace WoLNamesBlackedOut
                 }
             }
 
-            var candidates = new[]
-            {
-                System.IO.Path.Combine(AppContext.BaseDirectory, "WoLNamesBlackedOut.png"),
-                System.IO.Path.Combine(Environment.CurrentDirectory, "WoLNamesBlackedOut.png"),
-                System.IO.Path.Combine(AppContext.BaseDirectory, "App12", "WoLNamesBlackedOut.png"),
-                System.IO.Path.Combine(AppContext.BaseDirectory, "App12", "App12", "WoLNamesBlackedOut.png")
-            };
-
-            foreach (string candidate in candidates)
-            {
-                if (File.Exists(candidate))
-                {
-                    return candidate;
-                }
-            }
-
-            return System.IO.Path.Combine(AppContext.BaseDirectory, "WoLNamesBlackedOut.png");
+            return System.IO.Path.Combine(AppContext.BaseDirectory, safeDefaultFileName);
         }
 
         private string ResolveActiveBlackedOutImageMaskPath()
@@ -1263,6 +1387,26 @@ namespace WoLNamesBlackedOut
             if (await IsCustomImageAddonPurchasedAsync())
             {
                 return true;
+            }
+
+            bool isJapanese = LanguageJP?.IsChecked == true || IsJapaneseUiCulture();
+
+            var dialog = new ContentDialog
+            {
+                Title = isJapanese ? "有料アドオン" : "Paid Add-on",
+                Content = isJapanese
+                    ? "カスタム画像の選択には有料アドオンが必要です。購入しますか？"
+                    : "Custom image selection requires paid add-on. Purchase now?",
+                PrimaryButtonText = isJapanese ? "購入" : "Purchase",
+                CloseButtonText = isJapanese ? "キャンセル" : "Cancel",
+                DefaultButton = ContentDialogButton.Primary,
+                XamlRoot = this.Content.XamlRoot
+            };
+
+            ContentDialogResult dialogResult = await dialog.ShowAsync();
+            if (dialogResult != ContentDialogResult.Primary)
+            {
+                return false;
             }
 
             return await TryPurchaseCustomImageAddonAsync();
@@ -1442,7 +1586,7 @@ namespace WoLNamesBlackedOut
         {
             StartupTrace("ctor:start");
             this.InitializeComponent();
-            customImageAddonService = new CustomImageAddonService(CustomImageAddonStoreId);
+            customImageAddonService = new CustomImageAddonService(CustomImageAddonStoreId, () => WindowNative.GetWindowHandle(this));
             StartupTrace("ctor:after init");
 
             DrawingCanvas.AddHandler(
@@ -6828,6 +6972,7 @@ namespace WoLNamesBlackedOut
         {
             bool settingsChanged = false;
             bool isJapanese = IsJapaneseUiCulture();
+            bool isCustomImageAddonPurchased = await IsCustomImageAddonPurchasedAsync();
             bool requestSelectImage = false;
             ContentDialog? settingsDialog = null;
             var modeCombo = new ComboBox
@@ -6862,7 +7007,32 @@ namespace WoLNamesBlackedOut
 
             var selectButton = new Button
             {
-                Content = isJapanese ? "画像を選択" : "Select Image"
+                Content = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    Spacing = 4,
+                    Children =
+                    {
+                        new FontIcon { Glyph = "\uE7C5" },
+                        new TextBlock { Text = isJapanese ? "画像を選択" : "Select Image", VerticalAlignment = VerticalAlignment.Center }
+                    }
+                }
+            };
+
+            if (!isCustomImageAddonPurchased)
+            {
+                ToolTipService.SetToolTip(selectButton, isJapanese
+                    ? "※カスタム画像の選択は有料アドオンで有効になります。"
+                    : "Custom image selection is available via paid add-on.");
+            }
+
+            var premiumBadgeText = new TextBlock
+            {
+                Text = isJapanese ? "Premium（有料機能）" : "Premium",
+                Opacity = 0.9,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Margin = new Thickness(0, 0, 0, 2),
+                VerticalAlignment = VerticalAlignment.Center
             };
 
             var defaultButton = new Button
@@ -6870,12 +7040,14 @@ namespace WoLNamesBlackedOut
                 Content = isJapanese ? "デフォルトに戻す" : "Use Default"
             };
 
-            var purchaseInfoText = new TextBlock
+            var selectDefaultButtonsPanel = new StackPanel
             {
-                Text = isJapanese ? "※カスタム画像の選択は有料アドオンで有効になります。" : "Custom image selection is available via paid add-on.",
-                Opacity = 0.8,
-                TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(0, 8, 0, 0)
+                Spacing = 4,
+                Children =
+                {
+                    selectButton,
+                    defaultButton
+                }
             };
 
             var randomMinScaleSlider = new Slider
@@ -6955,9 +7127,21 @@ namespace WoLNamesBlackedOut
             var imageSectionHeader = new TextBlock
             {
                 Text = isJapanese ? "デフォルト画像" : "Default Image",
-                Margin = new Thickness(0, 0, 0, 2)
+                Margin = new Thickness(0, 0, 0, 2),
+                Width = defaultImageCombo.MinWidth,
+                VerticalAlignment = VerticalAlignment.Center
             };
 
+            var imageHeaderRow = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 8,
+                Children =
+                {
+                    imageSectionHeader,
+                    premiumBadgeText
+                }
+            };
 
             var imageSelectionRow = new StackPanel
             {
@@ -6966,8 +7150,7 @@ namespace WoLNamesBlackedOut
                 Children =
                 {
                     defaultImageCombo,
-                    selectButton,
-                    defaultButton
+                    selectDefaultButtonsPanel
                 }
             };
 
@@ -6991,9 +7174,8 @@ namespace WoLNamesBlackedOut
                 Spacing = 6,
                 Children =
                 {
-                    imageSectionHeader,
+                    imageHeaderRow,
                     imageSelectionRow,
-                    purchaseInfoText,
                     placementSectionHeader,
                     modeCombo,
                     //randomSectionHeader,
@@ -7071,6 +7253,7 @@ namespace WoLNamesBlackedOut
         {
             bool settingsChanged = false;
             bool isJapanese = IsJapaneseUiCulture();
+            bool isCustomImageAddonPurchased = await IsCustomImageAddonPurchasedAsync();
             bool requestSelectImage = false;
             ContentDialog? settingsDialog = null;
             var modeCombo = new ComboBox
@@ -7104,7 +7287,32 @@ namespace WoLNamesBlackedOut
 
             var selectButton = new Button
             {
-                Content = isJapanese ? "画像を選択" : "Select Image"
+                Content = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    Spacing = 4,
+                    Children =
+                    {
+                        new FontIcon { Glyph = "\uE7C5" },
+                        new TextBlock { Text = isJapanese ? "画像を選択" : "Select Image", VerticalAlignment = VerticalAlignment.Center }
+                    }
+                }
+            };
+
+            if (!isCustomImageAddonPurchased)
+            {
+                ToolTipService.SetToolTip(selectButton, isJapanese
+                    ? "※カスタム画像の選択は有料アドオンで有効になります。"
+                    : "Custom image selection is available via paid add-on.");
+            }
+
+            var premiumBadgeText = new TextBlock
+            {
+                Text = isJapanese ? "Premium（有料機能）" : "Premium",
+                Opacity = 0.9,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Margin = new Thickness(0, 0, 0, 2),
+                VerticalAlignment = VerticalAlignment.Center
             };
 
             var defaultButton = new Button
@@ -7112,12 +7320,14 @@ namespace WoLNamesBlackedOut
                 Content = isJapanese ? "デフォルトに戻す" : "Use Default"
             };
 
-            var purchaseInfoText = new TextBlock
+            var selectDefaultButtonsPanel = new StackPanel
             {
-                Text = isJapanese ? "※カスタム画像の選択は有料アドオンで有効になります。" : "Custom image selection is available via paid add-on.",
-                Opacity = 0.8,
-                TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(0, 8, 0, 0)
+                Spacing = 4,
+                Children =
+                {
+                    selectButton,
+                    defaultButton
+                }
             };
 
             selectButton.Click += async (_, __) =>
@@ -7137,7 +7347,20 @@ namespace WoLNamesBlackedOut
             var imageSectionHeader = new TextBlock
             {
                 Text = isJapanese ? "デフォルト画像" : "Default Image",
-                Margin = new Thickness(0, 0, 0, 2)
+                Margin = new Thickness(0, 0, 0, 2),
+                Width = defaultImageCombo.MinWidth,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+
+            var imageHeaderRow = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 8,
+                Children =
+                {
+                    imageSectionHeader,
+                    premiumBadgeText
+                }
             };
 
             var imageSelectionRow = new StackPanel
@@ -7147,8 +7370,7 @@ namespace WoLNamesBlackedOut
                 Children =
                 {
                     defaultImageCombo,
-                    selectButton,
-                    defaultButton
+                    selectDefaultButtonsPanel
                 }
             };
 
@@ -7166,9 +7388,8 @@ namespace WoLNamesBlackedOut
                 Spacing = 6,
                 Children =
                 {
-                    imageSectionHeader,
+                    imageHeaderRow,
                     imageSelectionRow,
-                    purchaseInfoText,
                     placementSectionHeader,
                     modeCombo
                 }
