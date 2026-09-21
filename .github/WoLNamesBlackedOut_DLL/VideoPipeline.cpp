@@ -2806,20 +2806,47 @@ bool VideoPipeline::EnsureBlackedOutImageMaskLoaded(const std::wstring& preferre
 		}
 	};
 
-	auto appendFromDir = [&appendCandidate](const std::wstring& dir) {
+	std::vector<std::wstring> fallbackFileNames;
+	auto appendFallbackFileName = [&fallbackFileNames](const std::wstring& fileName) {
+		if (fileName.empty()) {
+			return;
+		}
+		if (std::find(fallbackFileNames.begin(), fallbackFileNames.end(), fileName) == fallbackFileNames.end()) {
+			fallbackFileNames.push_back(fileName);
+		}
+	};
+
+	std::wstring preferredFileName;
+	if (!preferred.empty()) {
+		size_t sep = preferred.find_last_of(L"\\/");
+		preferredFileName = (sep == std::wstring::npos) ? preferred : preferred.substr(sep + 1);
+	}
+
+	appendFallbackFileName(preferredFileName);
+	appendFallbackFileName(L"01.png");
+	appendFallbackFileName(L"02.png");
+	appendFallbackFileName(L"03.png");
+	appendFallbackFileName(L"04.png");
+	appendFallbackFileName(L"05.png");
+	appendFallbackFileName(L"WoLNamesBlackedOut.png");
+
+	auto appendFromDir = [&appendCandidate, &fallbackFileNames](const std::wstring& dir) {
 		if (dir.empty()) {
 			return;
 		}
-		std::wstring path = dir;
-		if (path.back() != L'\\' && path.back() != L'/') {
-			path += L"\\";
+		std::wstring root = dir;
+		if (root.back() != L'\\' && root.back() != L'/') {
+			root += L"\\";
 		}
-		path += L"WoLNamesBlackedOut.png";
-		appendCandidate(path);
+		for (const auto& fileName : fallbackFileNames) {
+			appendCandidate(root + fileName);
+		}
 	};
 
 	appendCandidate(preferred);
-	appendCandidate(L"WoLNamesBlackedOut.png");
+	for (const auto& fileName : fallbackFileNames) {
+		appendCandidate(fileName);
+	}
 
 	wchar_t modulePath[MAX_PATH] = {};
 	if (GetModuleFileNameW(nullptr, modulePath, MAX_PATH) > 0) {
@@ -2838,21 +2865,38 @@ bool VideoPipeline::EnsureBlackedOutImageMaskLoaded(const std::wstring& preferre
 	appendFromDir(L".\\App12\\App12");
 	appendFromDir(L".\\App12");
 
+	auto logMaskWide = [](const wchar_t* fmt, ...) {
+		wchar_t buf[1024] = {};
+		va_list args;
+		va_start(args, fmt);
+		_vsnwprintf_s(buf, _countof(buf), _TRUNCATE, fmt, args);
+		va_end(args);
+		OutputDebugStringW(buf);
+	};
+
+	logMaskWide(L"[VideoPipeline][ImageMask] preferred='%ls' candidates=%zu\n", preferred.c_str(), candidates.size());
+
 	for (const auto& imagePath : candidates) {
 		DWORD attrs = GetFileAttributesW(imagePath.c_str());
 		if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_DIRECTORY)) {
+			logMaskWide(L"[VideoPipeline][ImageMask] skip missing/dir: %ls\n", imagePath.c_str());
 			continue;
 		}
+
+		logMaskWide(L"[VideoPipeline][ImageMask] try: %ls\n", imagePath.c_str());
 
 		Microsoft::WRL::ComPtr<ID3D11Texture2D> imageTexture;
 		uint32_t imageWidth = 0;
 		uint32_t imageHeight = 0;
 		if (!LoadImageToTexture(imagePath.c_str(), imageTexture, imageWidth, imageHeight) || !imageTexture.Get() || imageWidth == 0 || imageHeight == 0) {
+			logMaskWide(L"[VideoPipeline][ImageMask] load failed: %ls\n", imagePath.c_str());
 			continue;
 		}
 
 		Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> imageSrv;
-		if (FAILED(device_manager_.GetDevice()->CreateShaderResourceView(imageTexture.Get(), nullptr, imageSrv.ReleaseAndGetAddressOf())) || !imageSrv.Get()) {
+		HRESULT srvHr = device_manager_.GetDevice()->CreateShaderResourceView(imageTexture.Get(), nullptr, imageSrv.ReleaseAndGetAddressOf());
+		if (FAILED(srvHr) || !imageSrv.Get()) {
+			logMaskWide(L"[VideoPipeline][ImageMask] SRV create failed: %ls hr=0x%08X\n", imagePath.c_str(), static_cast<unsigned>(srvHr));
 			continue;
 		}
 
@@ -2865,10 +2909,12 @@ bool VideoPipeline::EnsureBlackedOutImageMaskLoaded(const std::wstring& preferre
 		}
 
 		blackedout_image_path_loaded_ = imagePath;
+		logMaskWide(L"[VideoPipeline][ImageMask] loaded: %ls (%ux%u)\n", imagePath.c_str(), imageWidth, imageHeight);
 		PipelineLogFmt("[VideoPipeline] Loaded image mask: %ls (%ux%u)\n", imagePath.c_str(), imageWidth, imageHeight);
 		return true;
 	}
 
+	logMaskWide(L"[VideoPipeline][ImageMask] failed. preferred='%ls'\n", preferred.c_str());
 	PipelineLog("[VideoPipeline] Failed to load image mask from all candidates\n");
 	return false;
 }

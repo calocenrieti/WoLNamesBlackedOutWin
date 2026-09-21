@@ -41,20 +41,49 @@ bool PreviewPipeline::EnsureBlackedOutImageMaskLoaded(const std::wstring& overri
         }
     };
 
-    auto appendFromDir = [&appendCandidate](const std::wstring& dir) {
+    std::vector<std::wstring> fallbackFileNames;
+    auto appendFallbackFileName = [&fallbackFileNames](const std::wstring& fileName) {
+        if (fileName.empty()) {
+            return;
+        }
+        if (std::find(fallbackFileNames.begin(), fallbackFileNames.end(), fileName) == fallbackFileNames.end()) {
+            fallbackFileNames.push_back(fileName);
+        }
+    };
+
+    std::wstring overrideFileName;
+    if (!override_path.empty()) {
+        size_t sep = override_path.find_last_of(L"\\/");
+        overrideFileName = (sep == std::wstring::npos) ? override_path : override_path.substr(sep + 1);
+    }
+
+    appendFallbackFileName(overrideFileName);
+    appendFallbackFileName(L"01.png");
+    appendFallbackFileName(L"02.png");
+    appendFallbackFileName(L"03.png");
+    appendFallbackFileName(L"04.png");
+    appendFallbackFileName(L"05.png");
+    appendFallbackFileName(L"WoLNamesBlackedOut.png");
+
+    auto appendFromDir = [&appendCandidate, &fallbackFileNames](const std::wstring& dir) {
         if (dir.empty()) {
             return;
         }
-        std::wstring path = dir;
-        if (path.back() != L'\\' && path.back() != L'/') {
-            path += L"\\";
+
+        std::wstring root = dir;
+        if (root.back() != L'\\' && root.back() != L'/') {
+            root += L"\\";
         }
-        path += L"WoLNamesBlackedOut.png";
-        appendCandidate(path);
+
+        for (const auto& fileName : fallbackFileNames) {
+            appendCandidate(root + fileName);
+        }
     };
 
     appendCandidate(override_path);
-    appendCandidate(L"WoLNamesBlackedOut.png");
+    for (const auto& fileName : fallbackFileNames) {
+        appendCandidate(fileName);
+    }
 
     wchar_t modulePath[MAX_PATH] = {};
     if (GetModuleFileNameW(nullptr, modulePath, MAX_PATH) > 0) {
@@ -73,21 +102,38 @@ bool PreviewPipeline::EnsureBlackedOutImageMaskLoaded(const std::wstring& overri
     appendFromDir(L".\\App12\\App12");
     appendFromDir(L".\\App12");
 
+    auto logMaskWide = [](const wchar_t* fmt, ...) {
+        wchar_t buf[1024] = {};
+        va_list args;
+        va_start(args, fmt);
+        _vsnwprintf_s(buf, _countof(buf), _TRUNCATE, fmt, args);
+        va_end(args);
+        OutputDebugStringW(buf);
+    };
+
+    logMaskWide(L"[PreviewPipeline][ImageMask] override='%ls' candidates=%zu\n", override_path.c_str(), candidates.size());
+
     for (const auto& imagePath : candidates) {
         DWORD attrs = GetFileAttributesW(imagePath.c_str());
         if (attrs == INVALID_FILE_ATTRIBUTES || (attrs & FILE_ATTRIBUTE_DIRECTORY)) {
+            logMaskWide(L"[PreviewPipeline][ImageMask] skip missing/dir: %ls\n", imagePath.c_str());
             continue;
         }
+
+        logMaskWide(L"[PreviewPipeline][ImageMask] try: %ls\n", imagePath.c_str());
 
         Microsoft::WRL::ComPtr<ID3D11Texture2D> imageTexture;
         uint32_t imageWidth = 0;
         uint32_t imageHeight = 0;
         if (!LoadImageToTexture(imagePath.c_str(), imageTexture, imageWidth, imageHeight) || !imageTexture.Get() || imageWidth == 0 || imageHeight == 0) {
+            logMaskWide(L"[PreviewPipeline][ImageMask] load failed: %ls\n", imagePath.c_str());
             continue;
         }
 
         Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> imageSrv;
-        if (!device_ || FAILED(device_->CreateShaderResourceView(imageTexture.Get(), nullptr, imageSrv.ReleaseAndGetAddressOf())) || !imageSrv.Get()) {
+        HRESULT srvHr = E_FAIL;
+        if (!device_ || FAILED(srvHr = device_->CreateShaderResourceView(imageTexture.Get(), nullptr, imageSrv.ReleaseAndGetAddressOf())) || !imageSrv.Get()) {
+            logMaskWide(L"[PreviewPipeline][ImageMask] SRV create failed: %ls hr=0x%08X\n", imagePath.c_str(), static_cast<unsigned>(srvHr));
             continue;
         }
 
@@ -102,10 +148,12 @@ bool PreviewPipeline::EnsureBlackedOutImageMaskLoaded(const std::wstring& overri
         }
 
         blackedout_image_path_loaded_ = imagePath;
+        logMaskWide(L"[PreviewPipeline][ImageMask] loaded: %ls (%ux%u)\n", imagePath.c_str(), imageWidth, imageHeight);
         LogToFile("[PreviewPipeline] Loaded image mask\n");
         return true;
     }
 
+    logMaskWide(L"[PreviewPipeline][ImageMask] failed. override='%ls'\n", override_path.c_str());
     LogToFile("[PreviewPipeline] Failed to load image mask from all candidates\n");
     return false;
 }
@@ -901,6 +949,23 @@ bool PreviewPipeline::ApplyMask(ID3D11Texture2D* source_texture, uint32_t width,
     MaskType fixmask_type = static_cast<MaskType>(mask_params_.fixmask_type);
     bool use_image_mask = blacked_type == MaskType::Image;
 
+    LogFmt(
+        "[PreviewPipeline][ApplyMask] blacked_type=%d fixmask_type=%d use_image_mask=%d blacked_mode=%d fixed_mode=%d det_count=%zu fixed_rect_count=%d blacked_path_len=%zu fixed_path_len=%zu\n",
+        static_cast<int>(blacked_type),
+        static_cast<int>(fixmask_type),
+        use_image_mask ? 1 : 0,
+        mask_params_.blacked_image_mode,
+        mask_params_.fixed_image_mode,
+        cached_detections_.size(),
+        mask_params_.fixed_rect_count,
+        wcsnlen(mask_params_.blacked_image_path, 512),
+        wcsnlen(mask_params_.fixed_image_path, 512));
+
+    if (use_image_mask)
+    {
+        LogFmt("[PreviewPipeline][ApplyMask] image mask branch entered\n");
+    }
+
     std::vector<Detection> active_detections = cached_detections_;
 
     if (mask_params_.exclude_by_name_enabled) {
@@ -1447,6 +1512,15 @@ void PreviewPipeline::UpdateMaskParams(const PreviewMaskParams& params) {
     std::lock_guard<std::mutex> lock(params_mutex_);
     memcpy(&mask_params_, &params, sizeof(PreviewMaskParams));
     random_layout_time_bucket_ = -1;
+
+    LogFmt(
+        "[PreviewPipeline][UpdateMaskParams] blacked_type=%d fixmask_type=%d blacked_mode=%d fixed_mode=%d blacked_path_len=%zu fixed_path_len=%zu\n",
+        mask_params_.blacked_type,
+        mask_params_.fixmask_type,
+        mask_params_.blacked_image_mode,
+        mask_params_.fixed_image_mode,
+        wcsnlen(mask_params_.blacked_image_path, 512),
+        wcsnlen(mask_params_.fixed_image_path, 512));
 }
 
 void PreviewPipeline::SetCopyrightOffset(int offset_x, int offset_y) {

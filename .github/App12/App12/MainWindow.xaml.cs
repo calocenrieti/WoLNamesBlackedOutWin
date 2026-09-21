@@ -1331,8 +1331,10 @@ namespace WoLNamesBlackedOut
                 Environment.CurrentDirectory,
                 executableDirectory,
                 packageInstalledLocation,
-                //System.IO.Path.Combine(AppContext.BaseDirectory, "App12"),
-                //System.IO.Path.Combine(AppContext.BaseDirectory, "App12", "App12")
+                System.IO.Path.Combine(AppContext.BaseDirectory, "App12"),
+                System.IO.Path.Combine(AppContext.BaseDirectory, "App12", "App12"),
+                string.IsNullOrWhiteSpace(packageInstalledLocation) ? string.Empty : System.IO.Path.Combine(packageInstalledLocation, "App12"),
+                string.IsNullOrWhiteSpace(packageInstalledLocation) ? string.Empty : System.IO.Path.Combine(packageInstalledLocation, "App12", "App12")
             ];
 
             string[] defaultFileCandidates =
@@ -1486,6 +1488,7 @@ namespace WoLNamesBlackedOut
 
                 string fileName = $"wol_DebugLog_{DateTime.Now:yyyyMMdd_HHmmss}.txt";
                 debugLogFilePath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), fileName);
+                Environment.SetEnvironmentVariable("WOL_DEBUG_LOG_FILE_PATH", debugLogFilePath, EnvironmentVariableTarget.Process);
                 return debugLogFilePath;
             }
         }
@@ -3968,15 +3971,52 @@ namespace WoLNamesBlackedOut
 
             public static MaskTypeKind GetMaskTypeKind(string? value)
             {
-                return value switch
+                string normalized = (value ?? string.Empty).Trim();
+                if (string.IsNullOrEmpty(normalized))
                 {
-                    "Inpaint" => MaskTypeKind.Inpaint,
-                    "Mosaic" => MaskTypeKind.Mosaic,
-                    "Blur" => MaskTypeKind.Blur,
-                    "No_Inference" => MaskTypeKind.NoInference,
-                    "Image" => MaskTypeKind.Image,
-                    _ => MaskTypeKind.Solid,
-                };
+                    return MaskTypeKind.Solid;
+                }
+
+                if (string.Equals(normalized, "Inpaint", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(normalized, "インペイント", StringComparison.OrdinalIgnoreCase))
+                {
+                    return MaskTypeKind.Inpaint;
+                }
+
+                if (string.Equals(normalized, "Mosaic", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(normalized, "モザイク", StringComparison.OrdinalIgnoreCase))
+                {
+                    return MaskTypeKind.Mosaic;
+                }
+
+                if (string.Equals(normalized, "Blur", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(normalized, "ぼかし", StringComparison.OrdinalIgnoreCase))
+                {
+                    return MaskTypeKind.Blur;
+                }
+
+                if (string.Equals(normalized, "No_Inference", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(normalized, "No Inference", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(normalized, "推論なし", StringComparison.OrdinalIgnoreCase))
+                {
+                    return MaskTypeKind.NoInference;
+                }
+
+                if (string.Equals(normalized, "Image", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(normalized, "画像", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(normalized, "イメージ", StringComparison.OrdinalIgnoreCase))
+                {
+                    return MaskTypeKind.Image;
+                }
+
+                if (string.Equals(normalized, "Solid", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(normalized, "単色", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(normalized, "塗りつぶし", StringComparison.OrdinalIgnoreCase))
+                {
+                    return MaskTypeKind.Solid;
+                }
+
+                return MaskTypeKind.Solid;
             }
 
             private static int _cpuFallbackDetected;
@@ -4301,11 +4341,17 @@ namespace WoLNamesBlackedOut
                         int rectCount = Math.Min(count, nativeRects.Length);
                         Array.Copy(rects, nativeRects, rectCount);
 
+                        MaskTypeKind blackedKind = GetMaskTypeKind(blackedOut);
+                        MaskTypeKind fixedKind = GetMaskTypeKind(fixedFrame);
+                        string previewMaskLog = $"[ImageMask][PreviewRun] blackedOut='{blackedOut}' blackedKind={blackedKind} blackedTypeNative={MaskTypeToNative(blackedKind)} blackedImagePath='{blackedImagePath}' fixedFrame='{fixedFrame}' fixedKind={fixedKind} fixedTypeNative={MaskTypeToNative(fixedKind)} fixedImagePath='{fixedImagePath}'";
+                        Debug.WriteLine(previewMaskLog);
+                        AppendDebugLog(previewMaskLog);
+
                         var maskParams = new NativePreviewMaskParams
                         {
-                            blacked_type = MaskTypeToNative(GetMaskTypeKind(blackedOut)),
+                            blacked_type = MaskTypeToNative(blackedKind),
                             name_color = nameColor,
-                            fixmask_type = MaskTypeToNative(GetMaskTypeKind(fixedFrame)),
+                            fixmask_type = MaskTypeToNative(fixedKind),
                             fixframe_color = fixframeColor,
                             fixed_rect_count = rectCount,
                             fixed_rects = nativeRects,
@@ -4435,11 +4481,17 @@ namespace WoLNamesBlackedOut
                 var rectCount = Math.Min(count, nativeRects.Length);
                 Array.Copy(rects, nativeRects, rectCount);
 
+                MaskTypeKind blackedKind = GetMaskTypeKind(blackedOut);
+                MaskTypeKind fixedKind = GetMaskTypeKind(fixedFrame);
+                string previewUpdateMaskLog = $"[ImageMask][PreviewUpdate] blackedOut='{blackedOut}' blackedKind={blackedKind} blackedTypeNative={MaskTypeToNative(blackedKind)} blackedImagePath='{blackedImagePath}' fixedFrame='{fixedFrame}' fixedKind={fixedKind} fixedTypeNative={MaskTypeToNative(fixedKind)} fixedImagePath='{fixedImagePath}'";
+                Debug.WriteLine(previewUpdateMaskLog);
+                AppendDebugLog(previewUpdateMaskLog);
+
                 var maskParams = new NativePreviewMaskParams
                 {
-                    blacked_type = MaskTypeToNative(GetMaskTypeKind(blackedOut)),
+                    blacked_type = MaskTypeToNative(blackedKind),
                     name_color = nameColor,
-                    fixmask_type = MaskTypeToNative(GetMaskTypeKind(fixedFrame)),
+                    fixmask_type = MaskTypeToNative(fixedKind),
                     fixframe_color = fixframeColor,
                     fixed_rect_count = rectCount,
                     fixed_rects = nativeRects,
@@ -6948,12 +7000,23 @@ namespace WoLNamesBlackedOut
         private (int mode, string path, float randomMinScale, float randomMaxScale, int randomLayoutChangeIntervalFrames, bool randomAllowOverflow) GetBlackedOutImageMaskNativeSettings()
         {
             var randomSettings = BuildImageRandomNativeSettings(blackedOutImageRandomMinScale, blackedOutImageRandomMaxScale, blackedOutImageRandomLayoutChangeIntervalFrames);
-            return ((int)blackedOutImageMaskMode, ResolveActiveBlackedOutImageMaskPath(), randomSettings.randomMinScale, randomSettings.randomMaxScale, randomSettings.randomLayoutChangeIntervalFrames, blackedOutImageRandomAllowOverflow);
+            string resolvedPath = ResolveActiveBlackedOutImageMaskPath();
+            bool fileExists = !string.IsNullOrWhiteSpace(resolvedPath) && File.Exists(resolvedPath);
+            string log = $"[ImageMask][BlackedOut] mode={(int)blackedOutImageMaskMode} useDefault={useDefaultBlackedOutImageMask} selectedDefault={selectedDefaultBlackedOutImageMaskFileName} customPath='{blackedOutImageMaskPath}' resolvedPath='{resolvedPath}' exists={fileExists}";
+            Debug.WriteLine(log);
+            AppendDebugLog(log);
+            return ((int)blackedOutImageMaskMode, resolvedPath, randomSettings.randomMinScale, randomSettings.randomMaxScale, randomSettings.randomLayoutChangeIntervalFrames, blackedOutImageRandomAllowOverflow);
         }
 
         private (int mode, string path, float randomMinScale, float randomMaxScale, int randomLayoutChangeIntervalFrames, bool randomAllowOverflow) GetFixedFrameImageMaskNativeSettings()
         {
-            return ((int)ClampFixedFrameImageMaskMode((int)fixedFrameImageMaskMode), ResolveActiveFixedFrameImageMaskPath(), 0.75f, 2.0f, 90, false);
+            int mode = (int)ClampFixedFrameImageMaskMode((int)fixedFrameImageMaskMode);
+            string resolvedPath = ResolveActiveFixedFrameImageMaskPath();
+            bool fileExists = !string.IsNullOrWhiteSpace(resolvedPath) && File.Exists(resolvedPath);
+            string log = $"[ImageMask][FixedFrame] mode={mode} useDefault={useDefaultFixedFrameImageMask} selectedDefault={selectedDefaultFixedFrameImageMaskFileName} customPath='{fixedFrameImageMaskPath}' resolvedPath='{resolvedPath}' exists={fileExists}";
+            Debug.WriteLine(log);
+            AppendDebugLog(log);
+            return (mode, resolvedPath, 0.75f, 2.0f, 90, false);
         }
 
         private async Task<StorageFile?> PickImageMaskFileAsync()

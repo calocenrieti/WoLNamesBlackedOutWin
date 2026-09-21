@@ -245,6 +245,23 @@
     <ApplicationIcon>WoLNamesBlackedOut.ico</ApplicationIcon>
     <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
   </PropertyGroup>
+  <Target Name="SyncNativeDllForPackaging" AfterTargets="Build">
+    <ItemGroup>
+      <NativeDllCandidate Include="$(ProjectDir)..\..\WoLNamesBlackedOut_DLL\$(Platform)\$(Configuration)\WoLNamesBlackedOut_DLL.dll" Condition="Exists('$(ProjectDir)..\..\WoLNamesBlackedOut_DLL\$(Platform)\$(Configuration)\WoLNamesBlackedOut_DLL.dll')" />
+      <NativeDllCandidate Include="$(SolutionDir)$(Platform)\$(Configuration)\WoLNamesBlackedOut_DLL.dll" Condition="Exists('$(SolutionDir)$(Platform)\$(Configuration)\WoLNamesBlackedOut_DLL.dll')" />
+      <NativeDllCandidate Include="$(ProjectDir)..\..\WoLNamesBlackedOut_DLL\x64\$(Configuration)\WoLNamesBlackedOut_DLL.dll" Condition="Exists('$(ProjectDir)..\..\WoLNamesBlackedOut_DLL\x64\$(Configuration)\WoLNamesBlackedOut_DLL.dll')" />
+    </ItemGroup>
+
+    <Copy SourceFiles="@(NativeDllCandidate)"
+          DestinationFolder="$(MSBuildProjectDirectory)"
+          SkipUnchangedFiles="true"
+          Condition="'@(NativeDllCandidate)' != ''" />
+
+    <Message Importance="high"
+             Text="[SyncNativeDllForPackaging] Copied: @(NativeDllCandidate) -> $(MSBuildProjectDirectory)"
+             Condition="'@(NativeDllCandidate)' != ''" />
+  </Target>
+
   <Target Name="PostPublish" AfterTargets="Publish">
     <Exec Command="xcopy &quot;$(ProjectDir)..\..\WoLNamesBlackedOut_DLL\x64\$(Configuration)\WoLNamesBlackedOut_DLL.dll&quot; &quot;$(PublishDir)&quot; /y /d&#xD;&#xA;xcopy &quot;$(ProjectDir)..\..\packages\Microsoft.ML.OnnxRuntime.DirectML.1.24.3\runtimes\win-x64\native\onnxruntime.dll&quot; &quot;$(PublishDir)&quot; /y /d&#xD;&#xA;xcopy &quot;$(ProjectDir)..\..\packages\Microsoft.ML.OnnxRuntime.DirectML.1.24.3\runtimes\win-x64\native\onnxruntime_providers_shared.dll&quot; &quot;$(PublishDir)&quot; /y /d" />
   </Target>

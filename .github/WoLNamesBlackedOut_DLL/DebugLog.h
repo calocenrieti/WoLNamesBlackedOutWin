@@ -28,6 +28,14 @@ inline std::string WOL_GetOrCreateDebugLogPath()
 		return debugLogFilePath;
 	}
 
+	char sharedPath[MAX_PATH * 4] = {};
+	DWORD sharedLen = GetEnvironmentVariableA("WOL_DEBUG_LOG_FILE_PATH", sharedPath, static_cast<DWORD>(sizeof(sharedPath)));
+	if (sharedLen > 0 && sharedLen < sizeof(sharedPath))
+	{
+		debugLogFilePath = std::string(sharedPath, sharedLen);
+		return debugLogFilePath;
+	}
+
 	char tempPath[MAX_PATH] = {};
 	DWORD pathLen = GetTempPathA(static_cast<DWORD>(sizeof(tempPath)), tempPath);
 	if (pathLen == 0 || pathLen >= sizeof(tempPath))
@@ -75,7 +83,35 @@ inline void WOL_OutputDebugStringA(const char* msg)
 	}
 }
 
+inline void WOL_OutputDebugStringW(const wchar_t* msg)
+{
+	if (!msg || !WOL_IsDebugLogExportEnabled())
+	{
+		return;
+	}
+
+	int required = WideCharToMultiByte(CP_UTF8, 0, msg, -1, nullptr, 0, nullptr, nullptr);
+	if (required <= 1)
+	{
+		return;
+	}
+
+	std::string utf8(static_cast<size_t>(required - 1), '\0');
+	int converted = WideCharToMultiByte(CP_UTF8, 0, msg, -1, utf8.data(), required, nullptr, nullptr);
+	if (converted <= 1)
+	{
+		return;
+	}
+
+	WOL_OutputDebugStringA(utf8.c_str());
+}
+
 #ifdef OutputDebugStringA
 #undef OutputDebugStringA
 #endif
 #define OutputDebugStringA WOL_OutputDebugStringA
+
+#ifdef OutputDebugStringW
+#undef OutputDebugStringW
+#endif
+#define OutputDebugStringW WOL_OutputDebugStringW
