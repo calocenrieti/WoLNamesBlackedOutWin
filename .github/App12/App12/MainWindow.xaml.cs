@@ -178,8 +178,10 @@ namespace WoLNamesBlackedOut
         {
             private readonly string storeIdOrToken;
             private readonly Func<nint>? windowHandleProvider;
+            private readonly object purchaseStatusLock = new object();
             private string? resolvedStoreId;
             private bool purchaseConfirmedInSession;
+            private Task<bool>? purchaseStatusTask;
 
             public CustomImageAddonService(string storeIdOrToken, Func<nint>? windowHandleProvider)
             {
@@ -247,12 +249,23 @@ namespace WoLNamesBlackedOut
                 return null;
             }
 
-            public async Task<bool> IsPurchasedAsync()
+            private Task<bool> GetOrStartPurchaseStatusTask()
             {
-                if (purchaseConfirmedInSession)
+                lock (purchaseStatusLock)
                 {
-                    return true;
+                    if (purchaseConfirmedInSession)
+                    {
+                        return Task.FromResult(true);
+                    }
+
+                    purchaseStatusTask ??= QueryPurchaseStatusAsync();
+                    return purchaseStatusTask;
                 }
+            }
+
+            private async Task<bool> QueryPurchaseStatusAsync()
+            {
+                bool purchased = false;
 
                 try
                 {
@@ -264,24 +277,25 @@ namespace WoLNamesBlackedOut
                         && appLicense.AddOnLicenses.TryGetValue(effectiveStoreId, out StoreLicense? license)
                         && license.IsActive)
                     {
-                        purchaseConfirmedInSession = true;
-                        return true;
+                        purchased = true;
                     }
-
-                    StoreProductQueryResult userCollectionResult = await context.GetUserCollectionAsync(["Durable"]);
-                    if (userCollectionResult?.Products != null)
+                    else
                     {
-                        foreach (StoreProduct product in userCollectionResult.Products.Values)
+                        StoreProductQueryResult userCollectionResult = await context.GetUserCollectionAsync(["Durable"]);
+                        if (userCollectionResult?.Products != null)
                         {
-                            bool idMatched =
-                                (!string.IsNullOrWhiteSpace(effectiveStoreId) && string.Equals(product.StoreId, effectiveStoreId, StringComparison.OrdinalIgnoreCase))
-                                || string.Equals(product.StoreId, storeIdOrToken, StringComparison.OrdinalIgnoreCase)
-                                || string.Equals(product.InAppOfferToken, storeIdOrToken, StringComparison.OrdinalIgnoreCase);
-
-                            if (idMatched && product.IsInUserCollection)
+                            foreach (StoreProduct product in userCollectionResult.Products.Values)
                             {
-                                purchaseConfirmedInSession = true;
-                                return true;
+                                bool idMatched =
+                                    (!string.IsNullOrWhiteSpace(effectiveStoreId) && string.Equals(product.StoreId, effectiveStoreId, StringComparison.OrdinalIgnoreCase))
+                                    || string.Equals(product.StoreId, storeIdOrToken, StringComparison.OrdinalIgnoreCase)
+                                    || string.Equals(product.InAppOfferToken, storeIdOrToken, StringComparison.OrdinalIgnoreCase);
+
+                                if (idMatched && product.IsInUserCollection)
+                                {
+                                    purchased = true;
+                                    break;
+                                }
                             }
                         }
                     }
@@ -290,6 +304,52 @@ namespace WoLNamesBlackedOut
                 {
                 }
 
+                lock (purchaseStatusLock)
+                {
+                    if (purchaseConfirmedInSession)
+                    {
+                        purchased = true;
+                    }
+
+                    if (purchased)
+                    {
+                        purchaseConfirmedInSession = true;
+                    }
+
+                    purchaseStatusTask = Task.FromResult(purchased);
+                }
+
+                return purchased;
+            }
+
+            public Task<bool> IsPurchasedAsync()
+            {
+                return GetOrStartPurchaseStatusTask();
+            }
+
+            public Task<bool> WarmPurchaseStatusAsync()
+            {
+                return GetOrStartPurchaseStatusTask();
+            }
+
+            public bool TryGetCachedPurchaseStatus(out bool purchased)
+            {
+                lock (purchaseStatusLock)
+                {
+                    if (purchaseConfirmedInSession)
+                    {
+                        purchased = true;
+                        return true;
+                    }
+
+                    if (purchaseStatusTask?.IsCompletedSuccessfully == true)
+                    {
+                        purchased = purchaseStatusTask.Result;
+                        return true;
+                    }
+                }
+
+                purchased = false;
                 return false;
             }
 
@@ -305,7 +365,12 @@ namespace WoLNamesBlackedOut
                         StorePurchaseResult resolvedResult = await context.RequestPurchaseAsync(effectiveStoreId);
                         if (resolvedResult.Status == StorePurchaseStatus.Succeeded || resolvedResult.Status == StorePurchaseStatus.AlreadyPurchased)
                         {
-                            purchaseConfirmedInSession = true;
+                            lock (purchaseStatusLock)
+                            {
+                                purchaseConfirmedInSession = true;
+                                purchaseStatusTask = Task.FromResult(true);
+                            }
+
                             return true;
                         }
                     }
@@ -316,7 +381,11 @@ namespace WoLNamesBlackedOut
                         bool purchased = fallbackResult.Status == StorePurchaseStatus.Succeeded || fallbackResult.Status == StorePurchaseStatus.AlreadyPurchased;
                         if (purchased)
                         {
-                            purchaseConfirmedInSession = true;
+                            lock (purchaseStatusLock)
+                            {
+                                purchaseConfirmedInSession = true;
+                                purchaseStatusTask = Task.FromResult(true);
+                            }
                         }
 
                         return purchased;
@@ -774,6 +843,7 @@ namespace WoLNamesBlackedOut
     private bool previewThresholdUpdateBusy = false;
     private bool suppressFrameSliderValueChanged = false;
         private bool previewSessionAutoOpenBusy = false;
+        private bool isVideoPreviewInitializing = false;
         private bool imagePreviewRefreshBusy = false;
         private readonly object previewNativeCloseTaskLock = new object();
         private Task previewNativeCloseTask = Task.CompletedTask;
@@ -1412,6 +1482,81 @@ namespace WoLNamesBlackedOut
             }
 
             return await TryPurchaseCustomImageAddonAsync();
+        }
+
+        private async Task HandleBlackedOutImageSelectionAsync()
+        {
+            try
+            {
+                bool canUseCustom = await EnsureCustomImageAddonAccessAsync();
+                if (!canUseCustom)
+                {
+                    return;
+                }
+
+                var file = await PickImageMaskFileAsync();
+                if (file != null)
+                {
+                    blackedOutImageMaskPath = file.Path;
+                    useDefaultBlackedOutImageMask = false;
+                    _ = RefreshMaskSettingPreviewAsync();
+                    _ = RefreshCurrentPreviewFrameIfPausedAsync();
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"HandleBlackedOutImageSelectionAsync failed: {ex.Message}");
+            }
+        }
+
+        private async Task HandleFixedFrameImageSelectionAsync()
+        {
+            try
+            {
+                bool canUseCustom = await EnsureCustomImageAddonAccessAsync();
+                if (!canUseCustom)
+                {
+                    return;
+                }
+
+                var file = await PickImageMaskFileAsync();
+                if (file != null)
+                {
+                    fixedFrameImageMaskPath = file.Path;
+                    useDefaultFixedFrameImageMask = false;
+                    _ = RefreshMaskSettingPreviewAsync();
+                    _ = RefreshCurrentPreviewFrameIfPausedAsync();
+                    RedrawRectanglesWithNewColor();
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"HandleFixedFrameImageSelectionAsync failed: {ex.Message}");
+            }
+        }
+
+        private void ConfigureCustomImageSelectionToolTip(Button selectButton)
+        {
+            string tooltipText = IsJapaneseUiCulture()
+                ? "※カスタム画像の選択は有料アドオンで有効になります。"
+                : "Custom image selection is available via paid add-on.";
+
+            if (customImageAddonService.TryGetCachedPurchaseStatus(out bool purchased))
+            {
+                ToolTipService.SetToolTip(selectButton, purchased ? null : tooltipText);
+                return;
+            }
+
+            ToolTipService.SetToolTip(selectButton, null);
+            _ = customImageAddonService.WarmPurchaseStatusAsync().ContinueWith(task =>
+            {
+                if (!task.IsCompletedSuccessfully || task.Result)
+                {
+                    return;
+                }
+
+                _ = DispatcherQueue.TryEnqueue(() => ToolTipService.SetToolTip(selectButton, tooltipText));
+            }, TaskScheduler.Default);
         }
 
         private async Task<bool> IsCustomImageAddonPurchasedAsync()
@@ -2662,6 +2807,19 @@ namespace WoLNamesBlackedOut
             }
         }
 
+        private bool CanEnableBlackedOutStartButton()
+        {
+            bool isVideoFile = !string.IsNullOrWhiteSpace(v_file_path)
+                && System.IO.Path.GetExtension(v_file_path).Equals(".mp4", StringComparison.OrdinalIgnoreCase);
+
+            if (!isVideoFile || isVideoPreviewInitializing || running_state)
+            {
+                return false;
+            }
+
+            return End_min.Value * 60 + End_sec.Value > Start_min.Value * 60 + Start_sec.Value;
+        }
+
         private static bool IsSliderMaskType(string value)
         {
             return value == "Mosaic" || value == "Blur" || value == "Inpaint";
@@ -3357,6 +3515,7 @@ namespace WoLNamesBlackedOut
             else if (fileExtension == ".mp4")
             {
                 last_preview_image = string.Empty;
+                _ = customImageAddonService.WarmPurchaseStatusAsync();
                 var properties = await GetVideoProperties(file);
                 if (properties != null)
                 {
@@ -3430,12 +3589,14 @@ namespace WoLNamesBlackedOut
 
                 BeginPreviewStatusFeedback(GetLocalizedString("Runtime.PreviewInitializing", "Preparing preview..."));
                 bool opened = false;
+                isVideoPreviewInitializing = true;
                 try
                 {
                     opened = await StartRealtimePreviewSessionAsync(v_file_path);
                 }
                 finally
                 {
+                    isVideoPreviewInitializing = false;
                     EndPreviewStatusFeedback(opened
                         ? GetLocalizedString("Runtime.PreviewReady", "Preview ready")
                         : GetLocalizedString("Runtime.PreviewInitFailed", "Preview initialization failed"));
@@ -5530,7 +5691,7 @@ namespace WoLNamesBlackedOut
                     FrameSlideBar.IsEnabled = isVideoFile;
                     SetSliderToStartButton.IsEnabled = isVideoFile;
                     SetSliderToEndButton.IsEnabled = isVideoFile;
-                    BlackedOutStartButton.IsEnabled = isVideoFile;
+                    BlackedOutStartButton.IsEnabled = CanEnableBlackedOutStartButton();
                 }
                 else
                 {
@@ -5756,14 +5917,17 @@ namespace WoLNamesBlackedOut
 
             if (PickAFileOutputTextBlock_text.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase)) //動画の時
             {
+                _ = customImageAddonService.WarmPurchaseStatusAsync();
                 BeginPreviewStatusFeedback(GetLocalizedString("Runtime.PreviewInitializing", "Preparing preview..."));
                 bool opened = false;
+                isVideoPreviewInitializing = true;
                 try
                 {
                     opened = await StartRealtimePreviewSessionAsync(v_file_path);
                 }
                 finally
                 {
+                    isVideoPreviewInitializing = false;
                     EndPreviewStatusFeedback(opened
                         ? GetLocalizedString("Runtime.PreviewReady", "Preview ready")
                         : GetLocalizedString("Runtime.PreviewInitFailed", "Preview initialization failed"));
@@ -6067,8 +6231,8 @@ namespace WoLNamesBlackedOut
                     StopButton.IsEnabled = false;
                     FFMpeg_text.Text = "";
                     cancel_pending_state = false;
-                    UIControl_enable_true();
                     running_state = false;
+                    UIControl_enable_true();
                     return;
                 }
 
@@ -6203,8 +6367,8 @@ namespace WoLNamesBlackedOut
 
                 cancel_pending_state = false;
                 cancel_state = false;
-                UIControl_enable_true();
                 running_state = false;
+                UIControl_enable_true();
                 if (CropEnabledCheckBox?.IsChecked == true)
                 {
                     RedrawCropOverlay();
@@ -6282,6 +6446,8 @@ namespace WoLNamesBlackedOut
             catch (Exception ex)
             {
                 StopProcessingPreviewSession();
+                running_state = false;
+                UIControl_enable_true();
                 Debug.WriteLine($"BlackedOutStartButton_Checked failed: {ex.Message}");
                 InfoBar.Message = "Processing failed";
                 InfoBar.Severity = InfoBarSeverity.Error;
@@ -7035,7 +7201,6 @@ namespace WoLNamesBlackedOut
         {
             bool settingsChanged = false;
             bool isJapanese = IsJapaneseUiCulture();
-            bool isCustomImageAddonPurchased = await IsCustomImageAddonPurchasedAsync();
             bool requestSelectImage = false;
             ContentDialog? settingsDialog = null;
             var modeCombo = new ComboBox
@@ -7082,16 +7247,11 @@ namespace WoLNamesBlackedOut
                 }
             };
 
-            if (!isCustomImageAddonPurchased)
-            {
-                ToolTipService.SetToolTip(selectButton, isJapanese
-                    ? "※カスタム画像の選択は有料アドオンで有効になります。"
-                    : "Custom image selection is available via paid add-on.");
-            }
+            ConfigureCustomImageSelectionToolTip(selectButton);
 
             var premiumBadgeText = new TextBlock
             {
-                Text = isJapanese ? "Premium（有料機能）" : "Premium",
+                Text = isJapanese ? "Premium" : "Premium",
                 Opacity = 0.9,
                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                 Margin = new Thickness(0, 0, 0, 2),
@@ -7246,6 +7406,8 @@ namespace WoLNamesBlackedOut
                 }
             };
 
+            _ = customImageAddonService.WarmPurchaseStatusAsync();
+
             settingsDialog = new ContentDialog
             {
                 Title = isJapanese ? "Imageマスク設定" : "Image Mask Settings",
@@ -7291,17 +7453,7 @@ namespace WoLNamesBlackedOut
 
                 if (requestSelectImage)
                 {
-                    bool canUseCustom = await EnsureCustomImageAddonAccessAsync();
-                    if (canUseCustom)
-                    {
-                        var file = await PickImageMaskFileAsync();
-                        if (file != null)
-                        {
-                            blackedOutImageMaskPath = file.Path;
-                            useDefaultBlackedOutImageMask = false;
-                            settingsChanged = true;
-                        }
-                    }
+                    _ = HandleBlackedOutImageSelectionAsync();
                 }
 
                 if (settingsChanged)
@@ -7316,7 +7468,6 @@ namespace WoLNamesBlackedOut
         {
             bool settingsChanged = false;
             bool isJapanese = IsJapaneseUiCulture();
-            bool isCustomImageAddonPurchased = await IsCustomImageAddonPurchasedAsync();
             bool requestSelectImage = false;
             ContentDialog? settingsDialog = null;
             var modeCombo = new ComboBox
@@ -7362,16 +7513,11 @@ namespace WoLNamesBlackedOut
                 }
             };
 
-            if (!isCustomImageAddonPurchased)
-            {
-                ToolTipService.SetToolTip(selectButton, isJapanese
-                    ? "※カスタム画像の選択は有料アドオンで有効になります。"
-                    : "Custom image selection is available via paid add-on.");
-            }
+            ConfigureCustomImageSelectionToolTip(selectButton);
 
             var premiumBadgeText = new TextBlock
             {
-                Text = isJapanese ? "Premium（有料機能）" : "Premium",
+                Text = isJapanese ? "Premium" : "Premium",
                 Opacity = 0.9,
                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                 Margin = new Thickness(0, 0, 0, 2),
@@ -7458,6 +7604,8 @@ namespace WoLNamesBlackedOut
                 }
             };
 
+            _ = customImageAddonService.WarmPurchaseStatusAsync();
+
             settingsDialog = new ContentDialog
             {
                 Title = isJapanese ? "固定枠Imageマスク設定" : "Fixed Frame Image Mask Settings",
@@ -7488,17 +7636,7 @@ namespace WoLNamesBlackedOut
 
                 if (requestSelectImage)
                 {
-                    bool canUseCustom = await EnsureCustomImageAddonAccessAsync();
-                    if (canUseCustom)
-                    {
-                        var file = await PickImageMaskFileAsync();
-                        if (file != null)
-                        {
-                            fixedFrameImageMaskPath = file.Path;
-                            useDefaultFixedFrameImageMask = false;
-                            settingsChanged = true;
-                        }
-                    }
+                    _ = HandleFixedFrameImageSelectionAsync();
                 }
 
                 if (settingsChanged)
@@ -7804,14 +7942,6 @@ namespace WoLNamesBlackedOut
                 return;
             }
 
-            if (End_min.Value * 60 + End_sec.Value > Start_min.Value * 60 + Start_sec.Value)
-            { 
-                BlackedOutStartButton.IsEnabled = true;
-            }
-            else
-            {
-                BlackedOutStartButton.IsEnabled = false;
-            }
             if (End_min.Value * 60 + End_sec.Value - (Start_min.Value * 60 + Start_sec.Value) <= 140 && End_min.Value * 60 + End_sec.Value > Start_min.Value * 60 + Start_sec.Value)
             {
                 ForX.IsEnabled = true;
@@ -7822,6 +7952,7 @@ namespace WoLNamesBlackedOut
                 ForX.IsChecked = false;
             }
 
+            BlackedOutStartButton.IsEnabled = CanEnableBlackedOutStartButton();
         }
     }
 }
