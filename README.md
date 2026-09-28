@@ -22,7 +22,7 @@ https://blog.calocenrieti.com/blog/wol_names_blacked_out_win/
 - AIが9割、人間が1割くらいでコード書きました。
 
 ## License
-This project is licensed under the MIT.<br>
+This project code is licensed under the MIT.<br>
 <br>
 This software uses code of <a href=http://ffmpeg.org>FFmpeg</a> licensed under the <a href=http://www.gnu.org/licenses/old-licenses/lgpl-2.1.html>LGPLv2.1</a> and its source can be downloaded <a href=https://git.ffmpeg.org/ffmpeg.git>here</a><br>
 <br>
@@ -55,6 +55,7 @@ This project incorporates the following third-party components:
 - **[System.Numerics.Tensors](https://www.nuget.org/packages/System.Numerics.Tensors/)** (MIT)
 
 - **[Ultralytics YOLO26](https://github.com/ultralytics/ultralytics)** (AGPL-3.0)<br>
-  *Note: Only the exported ONNX model is used. This project itself is not licensed under AGPL.*
+  *Note: Only the exported ONNX model is used. This project itself is not licensed under AGPL.*<br>
+  [Here are the models released on the Microsoft Store.](https://drive.google.com/file/d/1dXJhEQQVQoRh7NbgPG4VZyTrzrN9WfZb/view?usp=sharing)
 - **[PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR)** (Apache 2.0)<br>
   This project utilizes the en_PP-OCRv5_mobile_rec recognition model exported to ONNX.
