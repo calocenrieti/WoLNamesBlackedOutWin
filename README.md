@@ -54,8 +54,5 @@ This software also uses the following third-party components under their respect
 - **[System.Numerics.Tensors](https://www.nuget.org/packages/System.Numerics.Tensors/)** (MIT)
 
 - **[Ultralytics YOLO26](https://github.com/ultralytics/ultralytics)** (AGPL-3.0)<br>
-  This project uses models trained/exported with Ultralytics YOLO26. <br>
-  In accordance with the AGPL-3.0 license, the complete source code of this application is made available under AGPL-3.0.<br>
-  [Here are the models released on the Microsoft Store.](https://drive.google.com/file/d/1dXJhEQQVQoRh7NbgPG4VZyTrzrN9WfZb/view?usp=sharing)
 - **[PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR)** (Apache 2.0)<br>
   This project utilizes the en_PP-OCRv5_mobile_rec recognition model exported to ONNX.
