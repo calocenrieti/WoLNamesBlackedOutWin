@@ -55,4 +55,7 @@ This software also uses the following third-party components under their respect
 
 - **[Ultralytics YOLO26](https://github.com/ultralytics/ultralytics)** (AGPL-3.0)<br>
 - **[PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR)** (Apache 2.0)<br>
-  This project utilizes the en_PP-OCRv5_mobile_rec recognition model exported to ONNX.
+  This project utilizes the en_PP-OCRv5_mobile_rec recognition model exported to ONNX.<br>
+<br>
+Microsoft libraries (Windows App SDK, WinUI, Windows ML, etc.) are used under their respective Microsoft Software License Terms / MIT licenses. <br>
+They are not modified and are not placed under AGPL-3.0.<br>
