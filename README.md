@@ -22,16 +22,15 @@ https://blog.calocenrieti.com/blog/wol_names_blacked_out_win/
 - AIが9割、人間が1割くらいでコード書きました。
 
 ## License
-This project is licensed under the MIT.<br>
-<br>
-This software uses code of <a href=http://ffmpeg.org>FFmpeg</a> licensed under the <a href=http://www.gnu.org/licenses/old-licenses/lgpl-2.1.html>LGPLv2.1</a> and its source can be downloaded <a href=https://git.ffmpeg.org/ffmpeg.git>here</a><br>
-<br>
-The distribution includes third-party libraries under their respective licenses.<br>
-See the LICENSES folder for details.
 
-## Third Party Libraries & Licenses
+This project is licensed under the **AGPL-3.0** license  
+(because it incorporates Ultralytics YOLO26 models).
 
-This project incorporates the following third-party components:
+- Full source code (including paid add-on features) is available in this repository.
+- Model weights (ONNX) used in the Microsoft Store version can be downloaded here:  
+  [Download models](https://drive.google.com/file/d/1dXJhEQQVQoRh7NbgPG4VZyTrzrN9WfZb/view?usp=sharing)
+
+This software also uses the following third-party components under their respective licenses:
 
 - **[FFmpeg](https://ffmpeg.org/)** (LGPLv2.1)
 - **[ByteTrack-cpp](https://github.com/derpda/ByteTrack-cpp)** (MIT)
@@ -55,6 +54,8 @@ This project incorporates the following third-party components:
 - **[System.Numerics.Tensors](https://www.nuget.org/packages/System.Numerics.Tensors/)** (MIT)
 
 - **[Ultralytics YOLO26](https://github.com/ultralytics/ultralytics)** (AGPL-3.0)<br>
-  *Note: Only the exported ONNX model is used. This project itself is not licensed under AGPL.*
 - **[PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR)** (Apache 2.0)<br>
-  This project utilizes the en_PP-OCRv5_mobile_rec recognition model exported to ONNX.
+  This project utilizes the en_PP-OCRv5_mobile_rec recognition model exported to ONNX.<br>
+<br>
+Microsoft libraries (Windows App SDK, WinUI, Windows ML, etc.) are used under their respective Microsoft Software License Terms / MIT licenses. <br>
+They are not modified and are not placed under AGPL-3.0.<br>
