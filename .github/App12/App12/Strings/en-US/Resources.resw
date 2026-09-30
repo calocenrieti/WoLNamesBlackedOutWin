@@ -123,8 +123,14 @@
   <data name="DebugLogExport.Text" xml:space="preserve">
     <value>Debug Log Export(restart)</value>
   </data>
+  <data name="DisableDgpuPipeline.Text" xml:space="preserve">
+    <value>Disable dGPU pipeline (iGPU/NPU/CPU priority)(restart)</value>
+  </data>
+  <data name="StrictIGpuOnly.Text" xml:space="preserve">
+    <value>Strict iGPU priority (DirectML only)(restart)</value>
+  </data>
   <data name="ForceCpuPipeline.Text" xml:space="preserve">
-    <value>Force CPU pipeline(restart)</value>
+    <value>Force CPU line (NPU/CPU priority)(restart)</value>
   </data>
   <data name="LanguageJP.Text" xml:space="preserve">
     <value>Japanese UI(restart)</value>

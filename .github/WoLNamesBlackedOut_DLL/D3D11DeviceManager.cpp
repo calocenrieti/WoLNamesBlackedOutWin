@@ -4,7 +4,17 @@
 #include <iostream>
 #include <exception>
 #include <algorithm>
+#include <limits>
 #include <dxgi1_6.h>
+
+static bool IsTruthyEnv(const char* name) {
+	char value[32] = {};
+	DWORD got = GetEnvironmentVariableA(name, value, static_cast<DWORD>(sizeof(value)));
+	if (got == 0 || got >= sizeof(value)) {
+		return false;
+	}
+	return (value[0] == '1') || (_stricmp(value, "true") == 0);
+}
 
 static Microsoft::WRL::ComPtr<IDXGIAdapter1> SelectHighPerformanceAdapter() {
 	Microsoft::WRL::ComPtr<IDXGIFactory1> factory;
@@ -59,6 +69,65 @@ static Microsoft::WRL::ComPtr<IDXGIAdapter1> SelectHighPerformanceAdapter() {
 			(desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) == 0 &&
 			desc.DedicatedVideoMemory > largestDedicatedVideoMemory) {
 			largestDedicatedVideoMemory = desc.DedicatedVideoMemory;
+			selectedAdapter = candidate;
+		}
+	}
+
+	return selectedAdapter;
+}
+
+static Microsoft::WRL::ComPtr<IDXGIAdapter1> SelectPowerSavingAdapter() {
+	Microsoft::WRL::ComPtr<IDXGIFactory1> factory;
+	if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) {
+		return nullptr;
+	}
+
+	Microsoft::WRL::ComPtr<IDXGIAdapter1> selectedAdapter;
+
+	Microsoft::WRL::ComPtr<IDXGIFactory6> factory6;
+	if (SUCCEEDED(factory.As(&factory6))) {
+		for (UINT index = 0; ; ++index) {
+			Microsoft::WRL::ComPtr<IDXGIAdapter1> candidate;
+			HRESULT hr = factory6->EnumAdapterByGpuPreference(
+				index,
+				DXGI_GPU_PREFERENCE_MINIMUM_POWER,
+				IID_PPV_ARGS(&candidate));
+			if (hr == DXGI_ERROR_NOT_FOUND) {
+				break;
+			}
+			if (FAILED(hr)) {
+				continue;
+			}
+
+			DXGI_ADAPTER_DESC1 desc = {};
+			if (SUCCEEDED(candidate->GetDesc1(&desc)) &&
+				(desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) == 0) {
+				selectedAdapter = candidate;
+				break;
+			}
+		}
+	}
+
+	if (selectedAdapter) {
+		return selectedAdapter;
+	}
+
+	SIZE_T smallestDedicatedVideoMemory = std::numeric_limits<SIZE_T>::max();
+	for (UINT index = 0; ; ++index) {
+		Microsoft::WRL::ComPtr<IDXGIAdapter1> candidate;
+		HRESULT hr = factory->EnumAdapters1(index, &candidate);
+		if (hr == DXGI_ERROR_NOT_FOUND) {
+			break;
+		}
+		if (FAILED(hr)) {
+			continue;
+		}
+
+		DXGI_ADAPTER_DESC1 desc = {};
+		if (SUCCEEDED(candidate->GetDesc1(&desc)) &&
+			(desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) == 0 &&
+			desc.DedicatedVideoMemory <= smallestDedicatedVideoMemory) {
+			smallestDedicatedVideoMemory = desc.DedicatedVideoMemory;
 			selectedAdapter = candidate;
 		}
 	}
@@ -142,7 +211,18 @@ bool D3D11DeviceManager::Initialize(D3D_DRIVER_TYPE device_type, IDXGIAdapter* a
 	Microsoft::WRL::ComPtr<IDXGIAdapter1> preferredAdapter;
 	IDXGIAdapter* effectiveAdapter = adapter;
 	if (!effectiveAdapter && device_type == D3D_DRIVER_TYPE_HARDWARE) {
-		preferredAdapter = SelectHighPerformanceAdapter();
+		const bool disable_dgpu = IsTruthyEnv("WOL_DISABLE_DGPU");
+		const bool strict_igpu_only = IsTruthyEnv("WOL_STRICT_IGPU_ONLY");
+		const bool prefer_power_saving = disable_dgpu || strict_igpu_only;
+		preferredAdapter = prefer_power_saving ? SelectPowerSavingAdapter() : SelectHighPerformanceAdapter();
+		if (strict_igpu_only) {
+			OutputDebugStringA("[D3D11DeviceManager] WOL_STRICT_IGPU_ONLY=1: selecting power-saving/iGPU adapter\n");
+		}
+		else {
+			OutputDebugStringA(disable_dgpu
+				? "[D3D11DeviceManager] WOL_DISABLE_DGPU=1: selecting power-saving/iGPU adapter\n"
+				: "[D3D11DeviceManager] selecting high-performance adapter\n");
+		}
 		effectiveAdapter = preferredAdapter.Get();
 	}
 	const D3D_DRIVER_TYPE effectiveDeviceType = effectiveAdapter

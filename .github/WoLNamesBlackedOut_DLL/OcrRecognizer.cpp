@@ -244,13 +244,17 @@ std::string WideToUtf8(const wchar_t* value)
 	return utf8;
 }
 
-std::string BuildOcrSessionCacheKey(const wchar_t* model_path, WoLNamesBlackedOut::Core::GpuVendor vendor, bool use_gpu)
+std::string BuildOcrSessionCacheKey(const wchar_t* model_path, WoLNamesBlackedOut::Core::GpuVendor vendor, bool use_gpu, bool disable_dgpu_pipeline, bool strict_igpu_only)
 {
 	std::string key = WideToUtf8(model_path);
 	key += "|gpu=";
 	key += std::to_string(static_cast<int>(vendor));
 	key += "|use_gpu=";
 	key += use_gpu ? "1" : "0";
+	key += "|disabledgpu=";
+	key += disable_dgpu_pipeline ? "1" : "0";
+	key += "|strictigpu=";
+	key += strict_igpu_only ? "1" : "0";
 	char force_cpu_buf[32] = {};
 	DWORD got_force_cpu = GetEnvironmentVariableA("WOL_FORCE_CPU_PIPELINE", force_cpu_buf, static_cast<DWORD>(sizeof(force_cpu_buf)));
 	bool force_cpu = false;
@@ -260,6 +264,56 @@ std::string BuildOcrSessionCacheKey(const wchar_t* model_path, WoLNamesBlackedOu
 	key += "|forcecpu=";
 	key += force_cpu ? "1" : "0";
 	return key;
+}
+
+int ResolveDxgiAdapterIndexFromD3D11Device(ID3D11Device* device)
+{
+	if (!device) {
+		return -1;
+	}
+
+	Microsoft::WRL::ComPtr<IDXGIDevice> dxgi_device;
+	if (FAILED(device->QueryInterface(IID_PPV_ARGS(&dxgi_device))) || !dxgi_device) {
+		return -1;
+	}
+
+	Microsoft::WRL::ComPtr<IDXGIAdapter> current_adapter;
+	if (FAILED(dxgi_device->GetAdapter(&current_adapter)) || !current_adapter) {
+		return -1;
+	}
+
+	DXGI_ADAPTER_DESC current_desc{};
+	if (FAILED(current_adapter->GetDesc(&current_desc))) {
+		return -1;
+	}
+
+	Microsoft::WRL::ComPtr<IDXGIFactory1> factory;
+	if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory))) || !factory) {
+		return -1;
+	}
+
+	for (UINT index = 0;; ++index) {
+		Microsoft::WRL::ComPtr<IDXGIAdapter1> candidate;
+		HRESULT hr = factory->EnumAdapters1(index, &candidate);
+		if (hr == DXGI_ERROR_NOT_FOUND) {
+			break;
+		}
+		if (FAILED(hr) || !candidate) {
+			continue;
+		}
+
+		DXGI_ADAPTER_DESC1 desc1{};
+		if (FAILED(candidate->GetDesc1(&desc1))) {
+			continue;
+		}
+
+		if (desc1.AdapterLuid.HighPart == current_desc.AdapterLuid.HighPart &&
+			desc1.AdapterLuid.LowPart == current_desc.AdapterLuid.LowPart) {
+			return static_cast<int>(index);
+		}
+	}
+
+	return -1;
 }
 
 inline int ClampInt(int v, int lo, int hi) {
@@ -559,14 +613,29 @@ bool OcrRecognizer::LoadModel(const wchar_t* model_path, bool prefer_gpu)
 	}
 
 	bool force_cpu_pipeline = false;
+	bool disable_dgpu_pipeline = false;
+	bool strict_igpu_only = false;
 	{
 		char force_cpu_buf[32] = {};
 		DWORD got_force_cpu = GetEnvironmentVariableA("WOL_FORCE_CPU_PIPELINE", force_cpu_buf, static_cast<DWORD>(sizeof(force_cpu_buf)));
 		if (got_force_cpu > 0 && got_force_cpu < sizeof(force_cpu_buf)) {
 			force_cpu_pipeline = (force_cpu_buf[0] == '1') || (_stricmp(force_cpu_buf, "true") == 0);
 		}
-		char dbg_force[128] = {};
-		snprintf(dbg_force, sizeof(dbg_force), "[OcrRecognizer] force_cpu_pipeline=%d prefer_gpu=%d\n", force_cpu_pipeline ? 1 : 0, prefer_gpu ? 1 : 0);
+
+		char disable_dgpu_buf[32] = {};
+		DWORD got_disable_dgpu = GetEnvironmentVariableA("WOL_DISABLE_DGPU", disable_dgpu_buf, static_cast<DWORD>(sizeof(disable_dgpu_buf)));
+		if (got_disable_dgpu > 0 && got_disable_dgpu < sizeof(disable_dgpu_buf)) {
+			disable_dgpu_pipeline = (disable_dgpu_buf[0] == '1') || (_stricmp(disable_dgpu_buf, "true") == 0);
+		}
+
+		char strict_igpu_buf[32] = {};
+		DWORD got_strict_igpu = GetEnvironmentVariableA("WOL_STRICT_IGPU_ONLY", strict_igpu_buf, static_cast<DWORD>(sizeof(strict_igpu_buf)));
+		if (got_strict_igpu > 0 && got_strict_igpu < sizeof(strict_igpu_buf)) {
+			strict_igpu_only = (strict_igpu_buf[0] == '1') || (_stricmp(strict_igpu_buf, "true") == 0);
+		}
+
+		char dbg_force[208] = {};
+		snprintf(dbg_force, sizeof(dbg_force), "[OcrRecognizer] force_cpu_pipeline=%d disable_dgpu_pipeline=%d strict_igpu_only=%d prefer_gpu=%d\n", force_cpu_pipeline ? 1 : 0, disable_dgpu_pipeline ? 1 : 0, strict_igpu_only ? 1 : 0, prefer_gpu ? 1 : 0);
 		OutputDebugStringA(dbg_force);
 	}
 
@@ -579,7 +648,7 @@ bool OcrRecognizer::LoadModel(const wchar_t* model_path, bool prefer_gpu)
 		}
 	}
 
-	const std::string cache_key = BuildOcrSessionCacheKey(model_path, gpu_vendor_, use_gpu);
+	const std::string cache_key = BuildOcrSessionCacheKey(model_path, gpu_vendor_, use_gpu, disable_dgpu_pipeline, strict_igpu_only);
 	std::lock_guard<std::mutex> build_lock(GetOcrSessionBuildMutex());
 	{
 		auto& session_cache = GetOcrSessionCache();
@@ -640,7 +709,28 @@ bool OcrRecognizer::LoadModel(const wchar_t* model_path, bool prefer_gpu)
 			return false;
 		};
 
-		auto try_append_dml = [&has_ep, &session_options, &selected_ep, &ep_appended](OrtDmlDeviceFilter filter, const char* ep_name) -> bool {
+		auto try_append_openvino_device_chain = [&](const char* stage_label, const std::vector<const char*>& priority) -> bool {
+			for (const char* device_type : priority) {
+				std::unordered_map<std::string, std::string> openvino_options = {
+					{"device_type", device_type}
+				};
+
+				ReportStatus("OCR OpenVINO try (%s): device_type=%s", stage_label, device_type);
+				if (try_append_catalog_ep("OpenVINOExecutionProvider", openvino_options)) {
+					selected_ep = "OpenVINOExecutionProvider";
+					ep_appended = true;
+					char dbg_ov_ok[256] = {};
+					snprintf(dbg_ov_ok, sizeof(dbg_ov_ok), "[OcrRecognizer] OpenVINO selected (%s): device_type=%s\n", stage_label, device_type);
+					OutputDebugStringA(dbg_ov_ok);
+					return true;
+				}
+			}
+
+			ReportStatus("OCR OpenVINO unavailable (%s), fallback to next provider", stage_label);
+			return false;
+		};
+
+		auto try_append_dml = [&has_ep, &session_options, &selected_ep, &ep_appended](OrtDmlDeviceFilter filter, const char* ep_name, int fixed_device_id = -1) -> bool {
 			if (!has_ep("DmlExecutionProvider")) {
 				return false;
 			}
@@ -649,10 +739,18 @@ bool OcrRecognizer::LoadModel(const wchar_t* model_path, bool prefer_gpu)
 				const OrtDmlApi* dml_api = nullptr;
 				Ort::ThrowOnError(Ort::GetApi().GetExecutionProviderApi("DML", ORT_API_VERSION, reinterpret_cast<const void**>(&dml_api)));
 				if (dml_api != nullptr) {
-					OrtDmlDeviceOptions device_options;
-					device_options.Preference = OrtDmlPerformancePreference::HighPerformance;
-					device_options.Filter = filter;
-					Ort::ThrowOnError(dml_api->SessionOptionsAppendExecutionProvider_DML2(session_options, &device_options));
+					if (fixed_device_id >= 0) {
+						Ort::ThrowOnError(dml_api->SessionOptionsAppendExecutionProvider_DML(session_options, fixed_device_id));
+						char dbg_dml_id[256] = {};
+						snprintf(dbg_dml_id, sizeof(dbg_dml_id), "[OcrRecognizer] DML appended with fixed device_id=%d\n", fixed_device_id);
+						OutputDebugStringA(dbg_dml_id);
+					}
+					else {
+						OrtDmlDeviceOptions device_options;
+						device_options.Preference = OrtDmlPerformancePreference::HighPerformance;
+						device_options.Filter = filter;
+						Ort::ThrowOnError(dml_api->SessionOptionsAppendExecutionProvider_DML2(session_options, &device_options));
+					}
 					selected_ep = ep_name;
 					ep_appended = true;
 					return true;
@@ -685,7 +783,59 @@ bool OcrRecognizer::LoadModel(const wchar_t* model_path, bool prefer_gpu)
 			return false;
 		};
 
-		if (use_gpu) {
+		if (force_cpu_pipeline) {
+			ReportStatus("OCR force CPU pipeline enabled: trying NPU execution providers...");
+			if (!try_append_npu_catalog_ep()) {
+				#ifdef ENABLE_NPU_ADAPTER_ENUMERATION
+				try_append_dml(OrtDmlDeviceFilter::Npu, "DmlExecutionProvider(NPU)");
+				#endif
+			}
+			if (!ep_appended) {
+				ReportStatus("OCR force CPU pipeline: NPU EP unavailable. Falling back to CPU execution provider...");
+			}
+		}
+		else if (strict_igpu_only || disable_dgpu_pipeline) {
+			if (strict_igpu_only) {
+				ReportStatus("OCR WOL_STRICT_IGPU_ONLY=1: trying DirectML(iGPU fixed id) only...");
+			}
+			else {
+				ReportStatus("OCR WOL_DISABLE_DGPU=1: trying iGPU execution providers first...");
+			}
+			if (strict_igpu_only) {
+				const int igpu_adapter_index = ResolveDxgiAdapterIndexFromD3D11Device(device_.Get());
+				if (igpu_adapter_index >= 0) {
+					ReportStatus("OCR strict iGPU mode: trying DirectML fixed adapter id=%d", igpu_adapter_index);
+					try_append_dml(OrtDmlDeviceFilter::Gpu, "DmlExecutionProvider", igpu_adapter_index);
+				}
+				else {
+					ReportStatus("OCR strict iGPU mode: failed to resolve adapter id, trying DirectML GPU fallback");
+					try_append_dml(OrtDmlDeviceFilter::Gpu, "DmlExecutionProvider");
+				}
+			}
+			else {
+				try_append_openvino_device_chain("iGPU", { "GPU", "AUTO", "NPU", "CPU" });
+			}
+			if (!ep_appended && !strict_igpu_only) {
+				try_append_dml(OrtDmlDeviceFilter::Gpu, "DmlExecutionProvider");
+			}
+
+			if (!ep_appended && !strict_igpu_only) {
+				ReportStatus("OCR iGPU EP unavailable. Falling back to NPU execution providers...");
+				if (!try_append_npu_catalog_ep()) {
+					#ifdef ENABLE_NPU_ADAPTER_ENUMERATION
+					try_append_dml(OrtDmlDeviceFilter::Npu, "DmlExecutionProvider(NPU)");
+					#endif
+				}
+			}
+			else if (!ep_appended && strict_igpu_only) {
+				ReportStatus("OCR strict iGPU mode enabled: DirectML(iGPU fixed id) unavailable. Falling back to CPU...");
+			}
+
+			if (!ep_appended) {
+				ReportStatus("OCR NPU EP unavailable. Falling back to CPU execution provider...");
+			}
+		}
+		else if (use_gpu) {
 			const bool has_discrete_gpu = IsDiscreteD3D11Device(device_.Get());
 			char dbg_gpu[256] = {};
 			snprintf(dbg_gpu, sizeof(dbg_gpu), "[OcrRecognizer] use_gpu=1, has_discrete_gpu=%d, vendor=%d\n", has_discrete_gpu ? 1 : 0, static_cast<int>(gpu_vendor_));
@@ -725,9 +875,7 @@ bool OcrRecognizer::LoadModel(const wchar_t* model_path, bool prefer_gpu)
 				}
 				break;
 			case GpuVendor::Intel:
-				if (try_append_catalog_ep("OpenVINOExecutionProvider")) {
-					selected_ep = "OpenVINOExecutionProvider";
-					ep_appended = true;
+				if (try_append_openvino_device_chain("Intel GPU", { "AUTO", "GPU", "NPU", "CPU" })) {
 					OutputDebugStringA("[OcrRecognizer] Vendor EP selected: OpenVINOExecutionProvider\n");
 				}
 				break;
@@ -754,19 +902,7 @@ bool OcrRecognizer::LoadModel(const wchar_t* model_path, bool prefer_gpu)
 				ReportStatus("OCR NPU EP unavailable. Falling back to CPU execution provider...");
 			}
 		} else {
-			if (force_cpu_pipeline) {
-				ReportStatus("OCR force CPU pipeline enabled: trying NPU execution providers...");
-				if (!try_append_npu_catalog_ep()) {
-					#ifdef ENABLE_NPU_ADAPTER_ENUMERATION
-					try_append_dml(OrtDmlDeviceFilter::Npu, "DmlExecutionProvider(NPU)");
-					#endif
-				}
-				if (!ep_appended) {
-					ReportStatus("OCR force CPU pipeline: NPU EP unavailable. Falling back to CPU execution provider...");
-				}
-			} else {
-				ReportStatus("OCR GPU EP disabled. Falling back to CPU execution provider...");
-			}
+			ReportStatus("OCR GPU EP disabled. Falling back to CPU execution provider...");
 		}
 
 		std::string ep_display_name = NormalizeEpDisplayName(selected_ep);
@@ -781,7 +917,13 @@ bool OcrRecognizer::LoadModel(const wchar_t* model_path, bool prefer_gpu)
 		std::wstring session_model_path = model_path;
 		ModelCompilationCache::CacheDecision compile_cache_decision;
 		bool compile_cache_eligible = false;
-		if (ep_appended && ModelCompilationCache::SupportsPersistentCompileCache(selected_ep)) {
+		const bool disable_compile_cache_for_strict_igpu_openvino =
+			strict_igpu_only && selected_ep == "OpenVINOExecutionProvider";
+		if (disable_compile_cache_for_strict_igpu_openvino) {
+			OutputDebugStringA("[OcrRecognizer] Strict iGPU mode: skip OpenVINO CompileModel/persistent cache to avoid NPU plugin path\n");
+			ReportStatus("OCR strict iGPU mode: skipping OpenVINO compile cache");
+		}
+		else if (ep_appended && ModelCompilationCache::SupportsPersistentCompileCache(selected_ep)) {
 			std::string cache_error;
 			if (ModelCompilationCache::PrepareCacheDecision(model_path, selected_ep, compile_cache_decision, cache_error)) {
 				compile_cache_eligible = true;

@@ -38,7 +38,10 @@
                         <AppBarButton x:Name="MoreAppBarButton" x:Uid="MoreAppBarButton" Icon="More" Margin="150,0,0,0" ToolTipService.ToolTip="More...">
                             <AppBarButton.Flyout>
                                     <MenuFlyout >
+                                        <ToggleMenuFlyoutItem x:Name="DisableDgpuPipeline" x:Uid="DisableDgpuPipeline" Text="Disable dGPU pipeline" IsChecked="False" Click="DisableDgpuPipeline_Click"/>
+                                        <ToggleMenuFlyoutItem x:Name="StrictIGpuOnly" x:Uid="StrictIGpuOnly" Text="Strict iGPU priority (disable NPU)" IsChecked="False" Click="StrictIGpuOnly_Click"/>
                                         <ToggleMenuFlyoutItem x:Name="ForceCpuPipeline" x:Uid="ForceCpuPipeline" Text="Force CPU pipeline" IsChecked="False" Click="ForceCpuPipeline_Click"/>
+                                    <MenuFlyoutSeparator/>
                                         <ToggleMenuFlyoutItem x:Name="DebugLogExport" x:Uid="DebugLogExport" Text="Debug Log Export" IsChecked="False"/>
                                         <ToggleMenuFlyoutItem x:Name="LanguageJP" x:Uid="LanguageJP" Text="LanguageJP" IsChecked="True" Click="LanguageJP_Click"/>
                                     <MenuFlyoutSeparator/>

@@ -123,8 +123,14 @@
   <data name="DebugLogExport.Text" xml:space="preserve">
     <value>デバッグログ出力（再起動後）</value>
   </data>
+  <data name="DisableDgpuPipeline.Text" xml:space="preserve">
+    <value>dGPU無効モード（iGPU/NPU/CPU優先）（再起動後）</value>
+  </data>
+  <data name="StrictIGpuOnly.Text" xml:space="preserve">
+    <value>iGPU厳格モード（DirectMLのみ）（再起動後）</value>
+  </data>
   <data name="ForceCpuPipeline.Text" xml:space="preserve">
-    <value>CPUライン強制（再起動後）</value>
+    <value>CPUライン強制（NPU/CPU優先）（再起動後）</value>
   </data>
   <data name="LanguageJP.Text" xml:space="preserve">
     <value>日本語UI（再起動後）</value>

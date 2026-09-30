@@ -9,6 +9,55 @@ extern "C" {
 #include <libswscale/swscale.h>
 }
 
+int ResolveDxgiAdapterIndexFromD3D11Device(ID3D11Device* device) {
+	if (!device) {
+		return -1;
+	}
+
+	Microsoft::WRL::ComPtr<IDXGIDevice> dxgi_device;
+	if (FAILED(device->QueryInterface(IID_PPV_ARGS(&dxgi_device))) || !dxgi_device) {
+		return -1;
+	}
+
+	Microsoft::WRL::ComPtr<IDXGIAdapter> current_adapter;
+	if (FAILED(dxgi_device->GetAdapter(&current_adapter)) || !current_adapter) {
+		return -1;
+	}
+
+	DXGI_ADAPTER_DESC current_desc{};
+	if (FAILED(current_adapter->GetDesc(&current_desc))) {
+		return -1;
+	}
+
+	Microsoft::WRL::ComPtr<IDXGIFactory1> factory;
+	if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory))) || !factory) {
+		return -1;
+	}
+
+	for (UINT index = 0;; ++index) {
+		Microsoft::WRL::ComPtr<IDXGIAdapter1> candidate;
+		HRESULT hr = factory->EnumAdapters1(index, &candidate);
+		if (hr == DXGI_ERROR_NOT_FOUND) {
+			break;
+		}
+		if (FAILED(hr) || !candidate) {
+			continue;
+		}
+
+		DXGI_ADAPTER_DESC1 desc1{};
+		if (FAILED(candidate->GetDesc1(&desc1))) {
+			continue;
+		}
+
+		if (desc1.AdapterLuid.HighPart == current_desc.AdapterLuid.HighPart &&
+			desc1.AdapterLuid.LowPart == current_desc.AdapterLuid.LowPart) {
+			return static_cast<int>(index);
+		}
+	}
+
+	return -1;
+}
+
 bool IsInvalidGraphException(const Ort::Exception& ex) {
 	if (ex.GetOrtErrorCode() == ORT_INVALID_GRAPH) {
 		return true;
@@ -112,12 +161,33 @@ bool IsTruthyEnv(const char* name) {
 	return (value[0] == '1') || (_stricmp(value, "true") == 0);
 }
 
-std::string BuildWinMLSessionCacheKey(const wchar_t* model_path, WoLNamesBlackedOut::Core::GpuVendor vendor, bool force_cpu_pipeline) {
+std::string GetEnvString(const char* name) {
+	char value[64] = {};
+	DWORD got = GetEnvironmentVariableA(name, value, static_cast<DWORD>(sizeof(value)));
+	if (got == 0 || got >= sizeof(value)) {
+		return {};
+	}
+	return std::string(value, got);
+}
+
+std::string BuildWinMLSessionCacheKey(
+	const wchar_t* model_path,
+	WoLNamesBlackedOut::Core::GpuVendor vendor,
+	bool force_cpu_pipeline,
+	bool disable_dgpu_pipeline,
+	bool strict_igpu_only,
+	const std::string& openvino_device_type) {
 	std::string key = WideToUtf8(model_path);
 	key += "|gpu=";
 	key += std::to_string(static_cast<int>(vendor));
 	key += "|forcecpu=";
 	key += force_cpu_pipeline ? "1" : "0";
+	key += "|disabledgpu=";
+	key += disable_dgpu_pipeline ? "1" : "0";
+	key += "|strictigpu=";
+	key += strict_igpu_only ? "1" : "0";
+	key += "|ovdevice=";
+	key += openvino_device_type;
 	return key;
 }
 
@@ -459,12 +529,15 @@ bool WinMLUtils::LoadModel(const wchar_t* model_path) {
 	}
 
 	const bool force_cpu_pipeline = IsTruthyEnv("WOL_FORCE_CPU_PIPELINE");
+	const bool disable_dgpu_pipeline = IsTruthyEnv("WOL_DISABLE_DGPU");
+	const bool strict_igpu_only = IsTruthyEnv("WOL_STRICT_IGPU_ONLY");
 	{
-		char dbg_force[128];
-		snprintf(dbg_force, sizeof(dbg_force), "[WinMLUtils] force_cpu_pipeline=%d\n", force_cpu_pipeline ? 1 : 0);
+		char dbg_force[196];
+		snprintf(dbg_force, sizeof(dbg_force), "[WinMLUtils] force_cpu_pipeline=%d disable_dgpu_pipeline=%d strict_igpu_only=%d\n", force_cpu_pipeline ? 1 : 0, disable_dgpu_pipeline ? 1 : 0, strict_igpu_only ? 1 : 0);
 		OutputDebugStringA(dbg_force);
 	}
-	const std::string cache_key = BuildWinMLSessionCacheKey(model_path, gpu_vendor_, force_cpu_pipeline);
+	const std::string openvino_device_type_hint = GetEnvString("WOL_OPENVINO_DEVICE_TYPE_EFFECTIVE");
+	const std::string cache_key = BuildWinMLSessionCacheKey(model_path, gpu_vendor_, force_cpu_pipeline, disable_dgpu_pipeline, strict_igpu_only, openvino_device_type_hint);
 	std::lock_guard<std::mutex> build_lock(GetWinMLSessionBuildMutex());
 	{
 		auto& session_cache = GetWinMLSessionCache();
@@ -552,8 +625,9 @@ bool WinMLUtils::LoadModel(const wchar_t* model_path) {
 		// 組み込みEP（DirectML）は DML2 デバイスフィルタを使用。
 		std::string selected_ep;
 		std::string ep_reason;
+		std::string selected_openvino_device_type;
 		bool ep_appended = false;
-		auto try_append_dml = [&](OrtDmlDeviceFilter filter, const char* ep_name, const char* reason) -> bool {
+		auto try_append_dml = [&](OrtDmlDeviceFilter filter, const char* ep_name, const char* reason, int fixed_device_id = -1) -> bool {
 			if (!has_ep("DmlExecutionProvider")) {
 				return false;
 			}
@@ -565,10 +639,18 @@ bool WinMLUtils::LoadModel(const wchar_t* model_path) {
 					return false;
 				}
 
-				OrtDmlDeviceOptions device_options;
-				device_options.Preference = OrtDmlPerformancePreference::HighPerformance;
-				device_options.Filter = filter;
-				Ort::ThrowOnError(dml_api->SessionOptionsAppendExecutionProvider_DML2(session_options, &device_options));
+				if (fixed_device_id >= 0) {
+					Ort::ThrowOnError(dml_api->SessionOptionsAppendExecutionProvider_DML(session_options, fixed_device_id));
+					char dbg_dml_id[256] = {};
+					snprintf(dbg_dml_id, sizeof(dbg_dml_id), "[WinMLUtils] DML appended with fixed device_id=%d\n", fixed_device_id);
+					OutputDebugStringA(dbg_dml_id);
+				}
+				else {
+					OrtDmlDeviceOptions device_options;
+					device_options.Preference = OrtDmlPerformancePreference::HighPerformance;
+					device_options.Filter = filter;
+					Ort::ThrowOnError(dml_api->SessionOptionsAppendExecutionProvider_DML2(session_options, &device_options));
+				}
 				selected_ep = ep_name;
 				ep_reason = reason;
 				ep_appended = true;
@@ -600,6 +682,7 @@ bool WinMLUtils::LoadModel(const wchar_t* model_path) {
 			if (try_append_catalog_ep("OpenVINOExecutionProvider")) {
 				selected_ep = "OpenVINOExecutionProvider";
 				ep_reason = "NPU: OpenVINO selected";
+				selected_openvino_device_type.clear();
 				ep_appended = true;
 				return true;
 			}
@@ -607,89 +690,158 @@ bool WinMLUtils::LoadModel(const wchar_t* model_path) {
 			return false;
 		};
 
-		if (force_cpu_pipeline) {
-			OutputDebugStringA("[WinMLUtils] WOL_FORCE_CPU_PIPELINE=1: skip dGPU EP selection, prefer NPU then CPU\n");
-			ReportStatus("Force CPU pipeline enabled: trying NPU execution providers...");
-		} else {
-			const bool has_discrete_gpu = IsDiscreteD3D11Device(device_.Get());
-			if (has_discrete_gpu) {
-				ReportStatus("Trying dGPU execution providers...");
+		auto try_append_openvino_device_chain = [&](const char* stage_label, const std::vector<const char*>& priority) -> bool {
+			for (const char* device_type : priority) {
+				std::unordered_map<std::string, std::string> openvino_options = {
+					{"device_type", device_type}
+				};
 
-				switch (gpu_vendor_) {
-				case GpuVendor::NVIDIA: {
-					std::unordered_map<std::string, std::string> trt_rtx_options = {
-						{"nv_profile_min_shapes", "images:1x3x736x1280"},
-						{"nv_profile_max_shapes", "images:1x3x736x1280"},
-						{"nv_profile_opt_shapes", "images:1x3x736x1280"},
-						{"nv_max_workspace_size", "4294967296"},
-					};
-
-					std::string cache_path_str;
-					try {
-						auto local_folder = winrt::Windows::Storage::ApplicationData::Current().LocalFolder();
-						std::wstring cache_path_w = local_folder.Path().c_str();
-						cache_path_w += L"\\trt_rtx_cache";
-						CreateDirectoryW(cache_path_w.c_str(), nullptr);
-						int utf8_len = WideCharToMultiByte(CP_UTF8, 0, cache_path_w.c_str(), -1, nullptr, 0, nullptr, nullptr);
-						if (utf8_len > 0) {
-							cache_path_str.resize(utf8_len - 1);
-							WideCharToMultiByte(CP_UTF8, 0, cache_path_w.c_str(), -1, cache_path_str.data(), utf8_len, nullptr, nullptr);
-						}
-						trt_rtx_options["nv_runtime_cache_path"] = cache_path_str;
-						char dbg[512];
-						snprintf(dbg, sizeof(dbg), "[WinMLUtils] TensorRT-RTX runtime cache (LocalFolder): %s\n", cache_path_str.c_str());
-						OutputDebugStringA(dbg);
-					}
-					catch (...) {
-						char cache_path[MAX_PATH];
-						if (GetModuleFileNameA(nullptr, cache_path, MAX_PATH)) {
-							char* last_slash = strrchr(cache_path, '\\');
-							if (last_slash) {
-								*(last_slash + 1) = '\0';
-								strcat_s(cache_path, sizeof(cache_path), "trt_rtx_cache");
-								CreateDirectoryA(cache_path, nullptr);
-								trt_rtx_options["nv_runtime_cache_path"] = std::string(cache_path);
-								char dbg[512];
-								snprintf(dbg, sizeof(dbg), "[WinMLUtils] TensorRT-RTX runtime cache (fallback): %s\n", cache_path);
-								OutputDebugStringA(dbg);
-							}
-						}
-					}
-
-					if (try_append_catalog_ep("NvTensorRTRTXExecutionProvider", trt_rtx_options)) {
-						selected_ep = "NvTensorRTRTXExecutionProvider";
-						ep_reason = "NVIDIA GPU: TensorRT-RTX selected (profile shapes + 4GB workspace + runtime cache)";
-						ep_appended = true;
-					}
-					break;
+				ReportStatus("OpenVINO try (%s): device_type=%s", stage_label, device_type);
+				{
+					char dbg_ov_try[256];
+					snprintf(dbg_ov_try, sizeof(dbg_ov_try), "[WinMLUtils] OpenVINO try (%s) device_type=%s\n", stage_label, device_type);
+					OutputDebugStringA(dbg_ov_try);
 				}
-				case GpuVendor::AMD:
-					if (try_append_catalog_ep("MIGraphXExecutionProvider")) {
-						selected_ep = "MIGraphXExecutionProvider";
-						ep_reason = "AMD GPU: MIGraphX selected";
-						ep_appended = true;
-					}
-					break;
-				case GpuVendor::Intel:
-					if (try_append_catalog_ep("OpenVINOExecutionProvider")) {
-						selected_ep = "OpenVINOExecutionProvider";
-						ep_reason = "Intel GPU: OpenVINO selected";
-						ep_appended = true;
-					}
-					break;
-				default:
-					break;
+				if (try_append_catalog_ep("OpenVINOExecutionProvider", openvino_options)) {
+					selected_ep = "OpenVINOExecutionProvider";
+					selected_openvino_device_type = device_type;
+					ep_reason = std::string(stage_label) + ": OpenVINO selected (device_type=" + device_type + ")";
+					ep_appended = true;
+					ReportStatus("OpenVINO selected (%s): device_type=%s", stage_label, device_type);
+					return true;
 				}
 
-				if (!ep_appended) {
-					try_append_dml(OrtDmlDeviceFilter::Gpu, "DmlExecutionProvider", "dGPU: DirectML selected");
+				{
+					char dbg_ov_fail[256];
+					snprintf(dbg_ov_fail, sizeof(dbg_ov_fail), "[WinMLUtils] OpenVINO failed (%s) device_type=%s\n", stage_label, device_type);
+					OutputDebugStringA(dbg_ov_fail);
 				}
-			} else {
-				OutputDebugStringA("[WinMLUtils] dGPU not detected from current D3D11 device; skipping dGPU EP selection\n");
 			}
+
+			ReportStatus("OpenVINO unavailable (%s), fallback to next provider", stage_label);
+
+			return false;
+		};
+
+		const bool has_discrete_gpu = IsDiscreteD3D11Device(device_.Get());
+		const bool dGPUAllowed = !disable_dgpu_pipeline && !strict_igpu_only;
+		const bool should_try_dgpu_path = !force_cpu_pipeline && dGPUAllowed && has_discrete_gpu;
+
+		auto try_append_dgpu_ep = [&]() {
+			ReportStatus("Trying dGPU execution providers...");
+
+			switch (gpu_vendor_) {
+			case GpuVendor::NVIDIA: {
+				std::unordered_map<std::string, std::string> trt_rtx_options = {
+					{"nv_profile_min_shapes", "images:1x3x736x1280"},
+					{"nv_profile_max_shapes", "images:1x3x736x1280"},
+					{"nv_profile_opt_shapes", "images:1x3x736x1280"},
+					{"nv_max_workspace_size", "4294967296"},
+				};
+
+				std::string cache_path_str;
+				try {
+					auto local_folder = winrt::Windows::Storage::ApplicationData::Current().LocalFolder();
+					std::wstring cache_path_w = local_folder.Path().c_str();
+					cache_path_w += L"\\trt_rtx_cache";
+					CreateDirectoryW(cache_path_w.c_str(), nullptr);
+					int utf8_len = WideCharToMultiByte(CP_UTF8, 0, cache_path_w.c_str(), -1, nullptr, 0, nullptr, nullptr);
+					if (utf8_len > 0) {
+						cache_path_str.resize(utf8_len - 1);
+						WideCharToMultiByte(CP_UTF8, 0, cache_path_w.c_str(), -1, cache_path_str.data(), utf8_len, nullptr, nullptr);
+					}
+					trt_rtx_options["nv_runtime_cache_path"] = cache_path_str;
+					char dbg[512];
+					snprintf(dbg, sizeof(dbg), "[WinMLUtils] TensorRT-RTX runtime cache (LocalFolder): %s\n", cache_path_str.c_str());
+					OutputDebugStringA(dbg);
+				}
+				catch (...) {
+					char cache_path[MAX_PATH];
+					if (GetModuleFileNameA(nullptr, cache_path, MAX_PATH)) {
+						char* last_slash = strrchr(cache_path, '\\');
+						if (last_slash) {
+							*(last_slash + 1) = '\0';
+							strcat_s(cache_path, sizeof(cache_path), "trt_rtx_cache");
+							CreateDirectoryA(cache_path, nullptr);
+							trt_rtx_options["nv_runtime_cache_path"] = std::string(cache_path);
+							char dbg[512];
+							snprintf(dbg, sizeof(dbg), "[WinMLUtils] TensorRT-RTX runtime cache (fallback): %s\n", cache_path);
+							OutputDebugStringA(dbg);
+						}
+					}
+				}
+
+				if (try_append_catalog_ep("NvTensorRTRTXExecutionProvider", trt_rtx_options)) {
+					selected_ep = "NvTensorRTRTXExecutionProvider";
+					ep_reason = "NVIDIA GPU: TensorRT-RTX selected (profile shapes + 4GB workspace + runtime cache)";
+					ep_appended = true;
+				}
+				break;
+			}
+			case GpuVendor::AMD:
+				if (try_append_catalog_ep("MIGraphXExecutionProvider")) {
+					selected_ep = "MIGraphXExecutionProvider";
+					ep_reason = "AMD GPU: MIGraphX selected";
+					ep_appended = true;
+				}
+				break;
+			case GpuVendor::Intel:
+				try_append_openvino_device_chain("Intel GPU", { "AUTO", "GPU", "NPU", "CPU" });
+				break;
+			default:
+				break;
+			}
+
+			if (!ep_appended) {
+				try_append_dml(OrtDmlDeviceFilter::Gpu, "DmlExecutionProvider", "dGPU: DirectML selected");
+			}
+		};
+
+		auto try_append_igpu_ep = [&]() {
+			ReportStatus("Trying iGPU execution providers...");
+			if (strict_igpu_only) {
+				const int igpu_adapter_index = ResolveDxgiAdapterIndexFromD3D11Device(device_.Get());
+				if (igpu_adapter_index >= 0) {
+					ReportStatus("Strict iGPU mode: trying DirectML fixed adapter id=%d", igpu_adapter_index);
+					try_append_dml(OrtDmlDeviceFilter::Gpu, "DmlExecutionProvider", "Strict iGPU: DirectML selected (fixed adapter)", igpu_adapter_index);
+				}
+				else {
+					OutputDebugStringA("[WinMLUtils] Strict iGPU mode: failed to resolve adapter index; trying DirectML GPU filter fallback\n");
+					ReportStatus("Strict iGPU mode: failed to resolve adapter id, trying DirectML GPU fallback");
+					try_append_dml(OrtDmlDeviceFilter::Gpu, "DmlExecutionProvider", "Strict iGPU: DirectML selected (GPU fallback)");
+				}
+			}
+			else if (disable_dgpu_pipeline) {
+				try_append_openvino_device_chain("iGPU", { "GPU", "AUTO", "NPU", "CPU" });
+			}
+			else {
+				try_append_openvino_device_chain("iGPU", { "AUTO", "GPU", "NPU", "CPU" });
+			}
+
+			if (!ep_appended && !strict_igpu_only) {
+				try_append_dml(OrtDmlDeviceFilter::Gpu, "DmlExecutionProvider", "iGPU: DirectML selected");
+			}
+		};
+
+		if (force_cpu_pipeline) {
+			OutputDebugStringA("[WinMLUtils] WOL_FORCE_CPU_PIPELINE=1: skip GPU EP selection, prefer NPU then CPU\n");
+			ReportStatus("Force CPU pipeline enabled: trying NPU execution providers...");
+		}
+		else if (should_try_dgpu_path) {
+			try_append_dgpu_ep();
+		}
+		else {
+			if (disable_dgpu_pipeline) {
+				OutputDebugStringA("[WinMLUtils] WOL_DISABLE_DGPU=1: skip dGPU path and prefer iGPU/NPU/CPU\n");
+			}
+			else if (!has_discrete_gpu) {
+				OutputDebugStringA("[WinMLUtils] dGPU not detected from current D3D11 device; trying iGPU path\n");
+			}
+
+			try_append_igpu_ep();
 		}
 
-		if (!ep_appended) {
+		if (!ep_appended && !strict_igpu_only) {
 			ReportStatus("dGPU EP unavailable. Falling back to NPU execution providers...");
 			if (!try_append_npu_catalog_ep()) {
 				#ifdef ENABLE_NPU_ADAPTER_ENUMERATION
@@ -698,6 +850,9 @@ bool WinMLUtils::LoadModel(const wchar_t* model_path) {
 				OutputDebugStringA("[WinMLUtils] NPU adapter enumeration is not enabled in this build\n");
 				#endif
 			}
+		}
+		else if (!ep_appended && strict_igpu_only) {
+			ReportStatus("Strict iGPU mode enabled: DirectML(iGPU fixed id) unavailable. Falling back to CPU...");
 		}
 
 		if (!ep_appended) {
@@ -717,7 +872,13 @@ bool WinMLUtils::LoadModel(const wchar_t* model_path) {
 		std::wstring session_model_path = model_path;
 		ModelCompilationCache::CacheDecision compile_cache_decision;
 		bool compile_cache_eligible = false;
-		if (ep_appended && ModelCompilationCache::SupportsPersistentCompileCache(selected_ep)) {
+		const bool disable_compile_cache_for_strict_igpu_openvino =
+			strict_igpu_only && selected_ep == "OpenVINOExecutionProvider";
+		if (disable_compile_cache_for_strict_igpu_openvino) {
+			OutputDebugStringA("[WinMLUtils] Strict iGPU mode: skip OpenVINO CompileModel/persistent cache to avoid NPU plugin path\n");
+			ReportStatus("Strict iGPU mode: skipping OpenVINO compile cache");
+		}
+		else if (ep_appended && ModelCompilationCache::SupportsPersistentCompileCache(selected_ep)) {
 			std::string cache_error;
 			if (ModelCompilationCache::PrepareCacheDecision(model_path, selected_ep, compile_cache_decision, cache_error)) {
 				compile_cache_eligible = true;
@@ -792,6 +953,12 @@ bool WinMLUtils::LoadModel(const wchar_t* model_path) {
 		}
 
 		session_ = created_session;
+		if (selected_ep == "OpenVINOExecutionProvider" && !selected_openvino_device_type.empty()) {
+			SetEnvironmentVariableA("WOL_OPENVINO_DEVICE_TYPE_EFFECTIVE", selected_openvino_device_type.c_str());
+		}
+		else {
+			SetEnvironmentVariableA("WOL_OPENVINO_DEVICE_TYPE_EFFECTIVE", nullptr);
+		}
 		ReportStatus("EP ready: %s", ep_display_name.c_str());
 
 		// 利用可能なEP一覧をログ出力（SetEpSelectionPolicyで自動選択されたEPの確認用）
@@ -840,9 +1007,17 @@ bool WinMLUtils::LoadModel(const wchar_t* model_path) {
 			input_names_.size(), output_names_.size());
 		OutputDebugStringA(dbg2);
 		{
+			const std::string effective_cache_key = BuildWinMLSessionCacheKey(
+				model_path,
+				gpu_vendor_,
+				force_cpu_pipeline,
+				disable_dgpu_pipeline,
+				strict_igpu_only,
+				selected_ep == "OpenVINOExecutionProvider" ? selected_openvino_device_type : std::string());
+
 			auto& session_cache = GetWinMLSessionCache();
 			std::lock_guard<std::mutex> lock(GetWinMLSessionCacheMutex());
-			session_cache[cache_key] = WinMLSessionCacheEntry{ session_, input_names_, output_names_, ep_display_name };
+			session_cache[effective_cache_key] = WinMLSessionCacheEntry{ session_, input_names_, output_names_, ep_display_name };
 		}
 
 		return true;

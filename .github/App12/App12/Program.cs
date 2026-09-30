@@ -9,13 +9,15 @@ namespace WoLNamesBlackedOut
     {
         private static readonly string BootstrapLogFileName = CreateTimestampedFileName("wol_bootstrap.log");
         private const string ForceCpuPipelinePreferenceKey = "ForceCpuPipeline";
+        private const string DisableDgpuPipelinePreferenceKey = "DisableDgpuPipeline";
+        private const string StrictIGpuOnlyPreferenceKey = "StrictIGpuOnly";
 
         [STAThread]
         private static void Main(string[] args)
         {
             WriteBootstrapLog("main:begin");
 
-            TryApplyForceCpuPipelineAtProcessStart();
+            TryApplyPipelineModesAtProcessStart();
 
             AppDomain.CurrentDomain.FirstChanceException += (s, e) =>
             {
@@ -56,23 +58,51 @@ namespace WoLNamesBlackedOut
             }
         }
 
-        private static void TryApplyForceCpuPipelineAtProcessStart()
+        private static void TryApplyPipelineModesAtProcessStart()
         {
             try
             {
                 bool forceCpu = false;
+                bool disableDgpu = false;
+                bool strictIGpuOnly = false;
                 var settings = ApplicationData.Current.LocalSettings;
                 if (settings != null && settings.Values.TryGetValue(ForceCpuPipelinePreferenceKey, out object value))
                 {
                     _ = bool.TryParse(value?.ToString(), out forceCpu);
                 }
 
+                if (settings != null && settings.Values.TryGetValue(DisableDgpuPipelinePreferenceKey, out object disableDgpuValue))
+                {
+                    _ = bool.TryParse(disableDgpuValue?.ToString(), out disableDgpu);
+                }
+
+                if (settings != null && settings.Values.TryGetValue(StrictIGpuOnlyPreferenceKey, out object strictIGpuOnlyValue))
+                {
+                    _ = bool.TryParse(strictIGpuOnlyValue?.ToString(), out strictIGpuOnly);
+                }
+
+                if (forceCpu)
+                {
+                    disableDgpu = false;
+                    strictIGpuOnly = false;
+                }
+                else if (strictIGpuOnly)
+                {
+                    disableDgpu = false;
+                }
+                else if (disableDgpu)
+                {
+                    strictIGpuOnly = false;
+                }
+
                 Environment.SetEnvironmentVariable("WOL_FORCE_CPU_PIPELINE", forceCpu ? "1" : "0", EnvironmentVariableTarget.Process);
-                WriteBootstrapLog($"main:force_cpu_pipeline={(forceCpu ? "true" : "false")}");
+                Environment.SetEnvironmentVariable("WOL_DISABLE_DGPU", disableDgpu ? "1" : "0", EnvironmentVariableTarget.Process);
+                Environment.SetEnvironmentVariable("WOL_STRICT_IGPU_ONLY", strictIGpuOnly ? "1" : "0", EnvironmentVariableTarget.Process);
+                WriteBootstrapLog($"main:force_cpu_pipeline={(forceCpu ? "true" : "false")},disable_dgpu={(disableDgpu ? "true" : "false")},strict_igpu_only={(strictIGpuOnly ? "true" : "false")}");
             }
             catch (Exception ex)
             {
-                WriteBootstrapLog($"main:force_cpu_pipeline_read_failed:{ex.Message}");
+                WriteBootstrapLog($"main:pipeline_mode_read_failed:{ex.Message}");
             }
         }
 

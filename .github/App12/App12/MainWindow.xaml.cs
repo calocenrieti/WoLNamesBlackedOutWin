@@ -156,6 +156,8 @@ namespace WoLNamesBlackedOut
         private bool suppressCropNumberBoxValueChanged = false;
         private const string UiLanguagePreferenceKey = "LanguageJP";
         private const string ForceCpuPipelinePreferenceKey = "ForceCpuPipeline";
+        private const string DisableDgpuPipelinePreferenceKey = "DisableDgpuPipeline";
+        private const string StrictIGpuOnlyPreferenceKey = "StrictIGpuOnly";
 
         private enum CropDragEdge
         {
@@ -1600,6 +1602,90 @@ namespace WoLNamesBlackedOut
             return value == "1" || value.Equals("true", StringComparison.OrdinalIgnoreCase);
         }
 
+        private void GetPendingPipelineModeSelection(out bool forceCpuEnabled, out bool disableDgpuEnabled, out bool strictIGpuOnlyEnabled)
+        {
+            forceCpuEnabled = TryGetForceCpuPipelineMenuItem()?.IsChecked == true;
+            disableDgpuEnabled = TryGetDisableDgpuPipelineMenuItem()?.IsChecked == true;
+            strictIGpuOnlyEnabled = TryGetStrictIGpuOnlyMenuItem()?.IsChecked == true;
+
+            var localSettings = TryGetLocalSettings();
+            if (localSettings != null && localSettings.Values.TryGetValue(ForceCpuPipelinePreferenceKey, out object forceCpuPipelineValue))
+            {
+                _ = bool.TryParse(forceCpuPipelineValue?.ToString(), out forceCpuEnabled);
+            }
+
+            if (localSettings != null && localSettings.Values.TryGetValue(DisableDgpuPipelinePreferenceKey, out object disableDgpuPipelineValue))
+            {
+                _ = bool.TryParse(disableDgpuPipelineValue?.ToString(), out disableDgpuEnabled);
+            }
+
+            if (localSettings != null && localSettings.Values.TryGetValue(StrictIGpuOnlyPreferenceKey, out object strictIGpuOnlyValue))
+            {
+                _ = bool.TryParse(strictIGpuOnlyValue?.ToString(), out strictIGpuOnlyEnabled);
+            }
+
+            NormalizePipelineModeSelection(ref forceCpuEnabled, ref disableDgpuEnabled, ref strictIGpuOnlyEnabled);
+        }
+
+        private static void NormalizePipelineModeSelection(ref bool forceCpuEnabled, ref bool disableDgpuEnabled, ref bool strictIGpuOnlyEnabled)
+        {
+            if (forceCpuEnabled)
+            {
+                disableDgpuEnabled = false;
+                strictIGpuOnlyEnabled = false;
+            }
+            else if (strictIGpuOnlyEnabled)
+            {
+                disableDgpuEnabled = false;
+            }
+            else if (disableDgpuEnabled)
+            {
+                strictIGpuOnlyEnabled = false;
+            }
+        }
+
+        private static void ApplyEffectivePipelineModeFlags(bool forceCpuEnabled, bool disableDgpuEnabled, bool strictIGpuOnlyEnabled)
+        {
+            Environment.SetEnvironmentVariable("WOL_FORCE_CPU_PIPELINE", forceCpuEnabled ? "1" : "0", EnvironmentVariableTarget.Process);
+            Environment.SetEnvironmentVariable("WOL_DISABLE_DGPU", disableDgpuEnabled ? "1" : "0", EnvironmentVariableTarget.Process);
+            Environment.SetEnvironmentVariable("WOL_STRICT_IGPU_ONLY", strictIGpuOnlyEnabled ? "1" : "0", EnvironmentVariableTarget.Process);
+            AppendDebugLog($"ForceCpuPipeline={(forceCpuEnabled ? "true" : "false")},DisableDgpuPipeline={(disableDgpuEnabled ? "true" : "false")},StrictIGpuOnly={(strictIGpuOnlyEnabled ? "true" : "false")}");
+        }
+
+        private void ApplyPipelineModeUiAndPreferences(bool forceCpuEnabled, bool disableDgpuEnabled, bool strictIGpuOnlyEnabled)
+        {
+            NormalizePipelineModeSelection(ref forceCpuEnabled, ref disableDgpuEnabled, ref strictIGpuOnlyEnabled);
+
+            var forceCpuToggle = TryGetForceCpuPipelineMenuItem();
+            if (forceCpuToggle != null)
+            {
+                forceCpuToggle.IsChecked = forceCpuEnabled;
+            }
+
+            var disableDgpuToggle = TryGetDisableDgpuPipelineMenuItem();
+            if (disableDgpuToggle != null)
+            {
+                disableDgpuToggle.IsChecked = disableDgpuEnabled;
+            }
+
+            var strictIGpuOnlyToggle = TryGetStrictIGpuOnlyMenuItem();
+            if (strictIGpuOnlyToggle != null)
+            {
+                strictIGpuOnlyToggle.IsChecked = strictIGpuOnlyEnabled;
+            }
+
+            var localSettings = TryGetLocalSettings();
+            if (localSettings != null)
+            {
+                try { localSettings.Values[ForceCpuPipelinePreferenceKey] = forceCpuEnabled; } catch { }
+                try { localSettings.Values[DisableDgpuPipelinePreferenceKey] = disableDgpuEnabled; } catch { }
+                try { localSettings.Values[StrictIGpuOnlyPreferenceKey] = strictIGpuOnlyEnabled; } catch { }
+            }
+
+            ApplyBlackedOutMaskControlVisibility(GetComboText(BlackedOut_ComboBox, "Solid"));
+            _ = RefreshMaskSettingPreviewAsync();
+        }
+
         private ToggleMenuFlyoutItem? TryGetForceCpuPipelineMenuItem()
         {
             try
@@ -1609,6 +1695,50 @@ namespace WoLNamesBlackedOut
                     foreach (var it in menu.Items)
                     {
                         if (it is ToggleMenuFlyoutItem t && t.Name == "ForceCpuPipeline")
+                        {
+                            return t;
+                        }
+                    }
+                }
+            }
+            catch
+            {
+            }
+
+            return null;
+        }
+
+        private ToggleMenuFlyoutItem? TryGetDisableDgpuPipelineMenuItem()
+        {
+            try
+            {
+                if (MoreAppBarButton?.Flyout is MenuFlyout menu)
+                {
+                    foreach (var it in menu.Items)
+                    {
+                        if (it is ToggleMenuFlyoutItem t && t.Name == "DisableDgpuPipeline")
+                        {
+                            return t;
+                        }
+                    }
+                }
+            }
+            catch
+            {
+            }
+
+            return null;
+        }
+
+        private ToggleMenuFlyoutItem? TryGetStrictIGpuOnlyMenuItem()
+        {
+            try
+            {
+                if (MoreAppBarButton?.Flyout is MenuFlyout menu)
+                {
+                    foreach (var it in menu.Items)
+                    {
+                        if (it is ToggleMenuFlyoutItem t && t.Name == "StrictIGpuOnly")
                         {
                             return t;
                         }
@@ -1664,7 +1794,22 @@ namespace WoLNamesBlackedOut
 
         private static bool IsForceCpuPipelineEnabledFromEnv()
         {
-            string? value = Environment.GetEnvironmentVariable("WOL_FORCE_CPU_PIPELINE", EnvironmentVariableTarget.Process);
+            return IsEnvToggleEnabled("WOL_FORCE_CPU_PIPELINE");
+        }
+
+        private static bool IsDisableDgpuPipelineEnabledFromEnv()
+        {
+            return IsEnvToggleEnabled("WOL_DISABLE_DGPU");
+        }
+
+        private static bool IsStrictIGpuOnlyEnabledFromEnv()
+        {
+            return IsEnvToggleEnabled("WOL_STRICT_IGPU_ONLY");
+        }
+
+        private static bool IsEnvToggleEnabled(string variableName)
+        {
+            string? value = Environment.GetEnvironmentVariable(variableName, EnvironmentVariableTarget.Process);
             if (string.IsNullOrWhiteSpace(value))
             {
                 return false;
@@ -1678,29 +1823,91 @@ namespace WoLNamesBlackedOut
         {
             try
             {
-                bool enabled = sender is ToggleMenuFlyoutItem toggle && toggle.IsChecked;
-                bool current = IsForceCpuPipelineEnabledFromEnv();
-                if (enabled == current)
-                {
-                    enabled = !enabled;
-                }
+                GetPendingPipelineModeSelection(out bool forceCpuEnabled, out bool disableDgpuEnabled, out bool strictIGpuOnlyEnabled);
+                forceCpuEnabled = !forceCpuEnabled;
 
-                Environment.SetEnvironmentVariable("WOL_FORCE_CPU_PIPELINE", enabled ? "1" : "0", EnvironmentVariableTarget.Process);
-                AppendDebugLog($"ForceCpuPipeline={(enabled ? "true" : "false")}");
-
-                ApplyBlackedOutMaskControlVisibility(GetComboText(BlackedOut_ComboBox, "Solid"));
-                _ = RefreshMaskSettingPreviewAsync();
-
-                var localSettings = TryGetLocalSettings();
-                if (localSettings != null)
-                {
-                    try { localSettings.Values[ForceCpuPipelinePreferenceKey] = enabled; } catch { }
-                }
+                ApplyPipelineModeSelection(forceCpuEnabled, disableDgpuEnabled, strictIGpuOnlyEnabled, applyEffectiveFlags: false);
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"ForceCpuPipeline_Click failed: {ex.Message}");
             }
+        }
+
+        private void DisableDgpuPipeline_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                GetPendingPipelineModeSelection(out bool forceCpuEnabled, out bool disableDgpuEnabled, out bool strictIGpuOnlyEnabled);
+                disableDgpuEnabled = !disableDgpuEnabled;
+
+                ApplyPipelineModeSelection(forceCpuEnabled, disableDgpuEnabled, strictIGpuOnlyEnabled, applyEffectiveFlags: false);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"DisableDgpuPipeline_Click failed: {ex.Message}");
+            }
+        }
+
+        private void StrictIGpuOnly_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                GetPendingPipelineModeSelection(out bool forceCpuEnabled, out bool disableDgpuEnabled, out bool strictIGpuOnlyEnabled);
+                strictIGpuOnlyEnabled = !strictIGpuOnlyEnabled;
+
+                ApplyPipelineModeSelection(forceCpuEnabled, disableDgpuEnabled, strictIGpuOnlyEnabled, applyEffectiveFlags: false);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"StrictIGpuOnly_Click failed: {ex.Message}");
+            }
+        }
+
+        private void ApplyPipelineModeSelection(bool forceCpuEnabled, bool disableDgpuEnabled, bool strictIGpuOnlyEnabled, bool applyEffectiveFlags = true)
+        {
+            NormalizePipelineModeSelection(ref forceCpuEnabled, ref disableDgpuEnabled, ref strictIGpuOnlyEnabled);
+
+            if (applyEffectiveFlags)
+            {
+                ApplyEffectivePipelineModeFlags(forceCpuEnabled, disableDgpuEnabled, strictIGpuOnlyEnabled);
+            }
+
+            ApplyPipelineModeUiAndPreferences(forceCpuEnabled, disableDgpuEnabled, strictIGpuOnlyEnabled);
+        }
+
+        private void ShowStartupPipelineModeInfoBarIfNeeded(bool forceCpuEnabled, bool disableDgpuEnabled, bool strictIGpuOnlyEnabled, bool useJapanese)
+        {
+            string? message = null;
+
+            if (forceCpuEnabled)
+            {
+                message = useJapanese
+                    ? "CPUライン強制モードで起動しました。"
+                    : "Started in Force CPU pipeline mode.";
+            }
+            else if (strictIGpuOnlyEnabled)
+            {
+                message = useJapanese
+                    ? "iGPU厳格モードで起動しました。"
+                    : "Started in Strict iGPU mode.";
+            }
+            else if (disableDgpuEnabled)
+            {
+                message = useJapanese
+                    ? "dGPU無効モードで起動しました。"
+                    : "Started in dGPU disabled mode.";
+            }
+
+            if (string.IsNullOrWhiteSpace(message))
+            {
+                return;
+            }
+
+            InfoBar.Message = message;
+            InfoBar.Severity = InfoBarSeverity.Informational;
+            InfoBar.IsOpen = true;
+            InfoBar.Visibility = Visibility.Visible;
         }
 
         private void LanguageJP_Click(object sender, RoutedEventArgs e)
@@ -1807,6 +2014,8 @@ namespace WoLNamesBlackedOut
 
             // Program.cs で先に設定済みの process 環境変数を既定値として引き継ぐ
             bool forceCpuPipelineEnabled = IsForceCpuPipelineEnabledFromEnv();
+            bool disableDgpuPipelineEnabled = IsDisableDgpuPipelineEnabledFromEnv();
+            bool strictIGpuOnlyEnabled = IsStrictIGpuOnlyEnabledFromEnv();
             if (localSettings != null && localSettings.Values.TryGetValue(ForceCpuPipelinePreferenceKey, out object forceCpuPipelineValue))
             {
                 if (bool.TryParse(forceCpuPipelineValue?.ToString(), out bool parsedForceCpuPipelineEnabled))
@@ -1814,8 +2023,27 @@ namespace WoLNamesBlackedOut
                     forceCpuPipelineEnabled = parsedForceCpuPipelineEnabled;
                 }
             }
-            Environment.SetEnvironmentVariable("WOL_FORCE_CPU_PIPELINE", forceCpuPipelineEnabled ? "1" : "0", EnvironmentVariableTarget.Process);
-            StartupTrace($"ctor:force_cpu_pipeline={(forceCpuPipelineEnabled ? "true" : "false")}");
+
+            if (localSettings != null && localSettings.Values.TryGetValue(DisableDgpuPipelinePreferenceKey, out object disableDgpuPipelineValue))
+            {
+                if (bool.TryParse(disableDgpuPipelineValue?.ToString(), out bool parsedDisableDgpuPipelineEnabled))
+                {
+                    disableDgpuPipelineEnabled = parsedDisableDgpuPipelineEnabled;
+                }
+            }
+
+            if (localSettings != null && localSettings.Values.TryGetValue(StrictIGpuOnlyPreferenceKey, out object strictIGpuOnlyValue))
+            {
+                if (bool.TryParse(strictIGpuOnlyValue?.ToString(), out bool parsedStrictIGpuOnlyEnabled))
+                {
+                    strictIGpuOnlyEnabled = parsedStrictIGpuOnlyEnabled;
+                }
+            }
+
+            NormalizePipelineModeSelection(ref forceCpuPipelineEnabled, ref disableDgpuPipelineEnabled, ref strictIGpuOnlyEnabled);
+            ApplyEffectivePipelineModeFlags(forceCpuPipelineEnabled, disableDgpuPipelineEnabled, strictIGpuOnlyEnabled);
+            ApplyPipelineModeUiAndPreferences(forceCpuPipelineEnabled, disableDgpuPipelineEnabled, strictIGpuOnlyEnabled);
+            StartupTrace($"ctor:force_cpu_pipeline={(forceCpuPipelineEnabled ? "true" : "false")},disable_dgpu_pipeline={(disableDgpuPipelineEnabled ? "true" : "false")},strict_igpu_only={(strictIGpuOnlyEnabled ? "true" : "false")}");
 
             bool useJapaneseUi = IsJapaneseUiCulture();
             if (localSettings != null && localSettings.Values.TryGetValue(UiLanguagePreferenceKey, out object languagePreferenceValue))
@@ -1835,6 +2063,7 @@ namespace WoLNamesBlackedOut
 
             ApplyResourceLanguageOverride(useJapaneseUi);
             ApplyUiCulture(useJapaneseUi);
+            ShowStartupPipelineModeInfoBarIfNeeded(forceCpuPipelineEnabled, disableDgpuPipelineEnabled, strictIGpuOnlyEnabled, useJapaneseUi);
 
             // Add_Copyright の設定を読み込み
             if (localSettings != null && localSettings.Values.TryGetValue("Add_Copyright", out object addCopyrightValue))
@@ -2036,6 +2265,18 @@ namespace WoLNamesBlackedOut
                 if (forceCpuToggle != null)
                 {
                     forceCpuToggle.IsChecked = forceCpuPipelineEnabled;
+                }
+
+                var disableDgpuToggle = TryGetDisableDgpuPipelineMenuItem();
+                if (disableDgpuToggle != null)
+                {
+                    disableDgpuToggle.IsChecked = disableDgpuPipelineEnabled;
+                }
+
+                var strictIGpuOnlyToggle = TryGetStrictIGpuOnlyMenuItem();
+                if (strictIGpuOnlyToggle != null)
+                {
+                    strictIGpuOnlyToggle.IsChecked = strictIGpuOnlyEnabled;
                 }
             }
             catch { }
@@ -3132,10 +3373,11 @@ namespace WoLNamesBlackedOut
                 try { localSettings.Values[UiLanguagePreferenceKey] = LanguageJP?.IsChecked == true; } catch { }
                 try
                 {
-                    string? envValue = Environment.GetEnvironmentVariable("WOL_FORCE_CPU_PIPELINE", EnvironmentVariableTarget.Process);
-                    bool forceCpuEnabled = !string.IsNullOrWhiteSpace(envValue)
-                        && (envValue.Trim() == "1" || envValue.Trim().Equals("true", StringComparison.OrdinalIgnoreCase));
+                    GetPendingPipelineModeSelection(out bool forceCpuEnabled, out bool disableDgpuEnabled, out bool strictIGpuOnlyEnabled);
+
                     localSettings.Values[ForceCpuPipelinePreferenceKey] = forceCpuEnabled;
+                    localSettings.Values[DisableDgpuPipelinePreferenceKey] = disableDgpuEnabled;
+                    localSettings.Values[StrictIGpuOnlyPreferenceKey] = strictIGpuOnlyEnabled;
                 }
                 catch { }
             }
@@ -5865,7 +6107,7 @@ namespace WoLNamesBlackedOut
                             new HyperlinkButton { Content = "ByteTrack-cpp", NavigateUri = new Uri("https://github.com/derpda/ByteTrack-cpp/blob/main/LICENSE"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "Eigen 5.0.0", NavigateUri = new Uri("https://gitlab.com/libeigen/eigen/-/blob/master/COPYING.APACHE"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "OpenCV 4.13", NavigateUri = new Uri("https://github.com/opencv/opencv/blob/5.x/LICENSE"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "Microsoft.Windows.AI.MachineLearning 2.3.42", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.Windows.AI.MachineLearning/2.3.42/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.Windows.AI.MachineLearning 2.4.89", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.Windows.AI.MachineLearning/2.4.89/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "Microsoft.Windows.CppWinRT 3.0.260818.1", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.Windows.CppWinRT/3.0.260818.1/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             //c#
                             new HyperlinkButton { Content = "Microsoft.WindowsAppSDK 2.5.1", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK/2.5.1/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
@@ -5882,7 +6124,7 @@ namespace WoLNamesBlackedOut
                             new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.Search 2.5.5", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.Search/2.5.5/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.Widgets 2.0.5", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.Widgets/2.0.5/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.WinUI 2.3.9", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.WinUI/2.3.9/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "Microsoft.Web.WebView2 1.0.4191.47", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.Web.WebView2/1.0.4191.47/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.Web.WebView2 1.0.4258.31", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.Web.WebView2/1.0.4258.31/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "System.Numerics.Tensors 9.0.0", NavigateUri = new Uri("https://licenses.nuget.org/MIT"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             //model
                             new HyperlinkButton { Content = "PaddleOCR (model)", NavigateUri = new Uri("https://github.com/PaddlePaddle/PaddleOCR?tab=Apache-2.0-1-ov-file"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },

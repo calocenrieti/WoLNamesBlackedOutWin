@@ -176,7 +176,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4191.47" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4258.31" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2705" />
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.5.1" />
   </ItemGroup>
@@ -252,14 +252,9 @@
       <NativeDllCandidate Include="$(ProjectDir)..\..\WoLNamesBlackedOut_DLL\x64\$(Configuration)\WoLNamesBlackedOut_DLL.dll" Condition="Exists('$(ProjectDir)..\..\WoLNamesBlackedOut_DLL\x64\$(Configuration)\WoLNamesBlackedOut_DLL.dll')" />
     </ItemGroup>
 
-    <Copy SourceFiles="@(NativeDllCandidate)"
-          DestinationFolder="$(MSBuildProjectDirectory)"
-          SkipUnchangedFiles="true"
-          Condition="'@(NativeDllCandidate)' != ''" />
+    <Copy SourceFiles="@(NativeDllCandidate)" DestinationFolder="$(MSBuildProjectDirectory)" SkipUnchangedFiles="true" Condition="'@(NativeDllCandidate)' != ''" />
 
-    <Message Importance="high"
-             Text="[SyncNativeDllForPackaging] Copied: @(NativeDllCandidate) -> $(MSBuildProjectDirectory)"
-             Condition="'@(NativeDllCandidate)' != ''" />
+    <Message Importance="high" Text="[SyncNativeDllForPackaging] Copied: @(NativeDllCandidate) -&gt; $(MSBuildProjectDirectory)" Condition="'@(NativeDllCandidate)' != ''" />
   </Target>
 
   <Target Name="PostPublish" AfterTargets="Publish">
