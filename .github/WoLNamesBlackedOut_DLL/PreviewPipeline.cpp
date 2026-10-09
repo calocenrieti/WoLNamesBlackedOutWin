@@ -19,6 +19,30 @@ static void LogToFile(const char* msg) {
     OutputDebugStringA(msg);
 }
 
+static int ResolveClassBitForMask(int class_id)
+{
+    switch (class_id) {
+    case 0:
+        return 1 << 0; // overhead
+    case 1:
+        return 1 << 1; // chat
+    case 2:
+        return 1 << 2; // party
+    case 3:
+        return 1 << 3; // general
+    default:
+        return 1 << 3; // unknown => general
+    }
+}
+
+static bool IsPreviewMaskClassEnabled(const PreviewMaskParams& params, int class_id)
+{
+    const bool hasFlags = params.reserved[1] == 1;
+    const int classFlags = hasFlags ? params.reserved[0] : 0x0F;
+    const int classBit = ResolveClassBitForMask(class_id);
+    return (classFlags & classBit) != 0;
+}
+
 bool PreviewPipeline::EnsureBlackedOutImageMaskLoaded(const std::wstring& override_path) {
     const bool cachedCpuReady = !cached_blackedout_image_bgra_.empty();
     const bool cachedGpuReady = cached_blackedout_image_srv_.Get() != nullptr;
@@ -966,23 +990,35 @@ bool PreviewPipeline::ApplyMask(ID3D11Texture2D* source_texture, uint32_t width,
         LogFmt("[PreviewPipeline][ApplyMask] image mask branch entered\n");
     }
 
-    std::vector<Detection> active_detections = cached_detections_;
+    std::vector<Detection> class_filtered_detections;
+    class_filtered_detections.reserve(cached_detections_.size());
+    for (const auto& d : cached_detections_) {
+        if (IsPreviewMaskClassEnabled(mask_params_, d.class_id)) {
+            class_filtered_detections.push_back(d);
+        }
+    }
+    LogFmt("[MaskClass][Preview] det_in=%zu det_after=%zu flags=%d\n",
+        cached_detections_.size(),
+        class_filtered_detections.size(),
+        mask_params_.reserved[0]);
+
+    std::vector<Detection> active_detections = class_filtered_detections;
 
     if (mask_params_.exclude_by_name_enabled) {
         preview_frame_counter_++;
-        LogFmt("[ExcludeByName][Preview] frame=%d det_in=%zu\n", preview_frame_counter_, cached_detections_.size());
+        LogFmt("[ExcludeByName][Preview] frame=%d det_in=%zu\n", preview_frame_counter_, class_filtered_detections.size());
 
         ocr_text_by_track_id_.clear();
         ocr_last_frame_by_track_.clear();
 
         std::vector<OcrTrackRoi> ocr_rois;
         std::vector<std::pair<Detection, uint64_t>> tracked_entries;
-        tracked_entries.reserve(cached_detections_.size());
-        ocr_rois.reserve(cached_detections_.size());
+        tracked_entries.reserve(class_filtered_detections.size());
+        ocr_rois.reserve(class_filtered_detections.size());
         const bool ocr_ready = ocr_recognizer_.IsReady();
         uint64_t pseudo_track_id = 1;
 
-        for (const auto& d : cached_detections_) {
+        for (const auto& d : class_filtered_detections) {
             tracked_entries.push_back({ d, pseudo_track_id });
             if (ocr_ready) {
                 ocr_rois.push_back({ pseudo_track_id, d });

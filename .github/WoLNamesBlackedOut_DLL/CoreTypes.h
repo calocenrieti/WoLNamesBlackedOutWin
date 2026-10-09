@@ -191,6 +191,10 @@ namespace WoLNamesBlackedOut::Core {
 		const wchar_t* ocr_model_path;
 		const wchar_t* ocr_dict_path;
 		const wchar_t* mask_exclude_text_csv;
+		bool mask_class_overhead_enabled;
+		bool mask_class_chat_enabled;
+		bool mask_class_party_enabled;
+		bool mask_class_general_enabled;
 
 		// デフォルトコンストラクタ
 		PipelineConfig()
@@ -219,7 +223,11 @@ namespace WoLNamesBlackedOut::Core {
 			  text_similarity_threshold(0.85f),
 			  ocr_model_path(nullptr),
 			  ocr_dict_path(nullptr),
-			  mask_exclude_text_csv(nullptr)
+			  mask_exclude_text_csv(nullptr),
+			  mask_class_overhead_enabled(true),
+			  mask_class_chat_enabled(true),
+			  mask_class_party_enabled(true),
+			  mask_class_general_enabled(true)
 		{}
 
 	};

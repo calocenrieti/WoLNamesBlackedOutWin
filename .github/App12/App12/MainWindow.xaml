@@ -163,30 +163,29 @@
                         </StackPanel>
                     </StackPanel>
                         <StackPanel Orientation="Horizontal" Margin="20,0,0,0">
-                            <Slider x:Uid="YoloThresholdSlider" x:Name="YoloThresholdSlider" Header="YOLO Threshold" Value="0.15" Minimum="0.01" Maximum="0.50" SmallChange="0.01" LargeChange="0.01" StepFrequency="0.01" SnapsTo="StepValues" Width="150" Margin="4,0,8,0" ValueChanged="YoloThresholdSlider_ValueChanged" IsThumbToolTipEnabled="True" ThumbToolTipValueConverter="{StaticResource TwoDecimalSliderToolTipConverter}" />
-                            <CheckBox x:Uid="Add_Copyright" x:Name="Add_Copyright" Content="Add_Copyright" IsChecked="True" Margin="16,0,0,0" />
-                            <Button x:Uid="SelectCopyrightImageButton" x:Name="SelectCopyrightImageButton" Click="SelectCopyrightImageButton_Click"  Margin="6,0,0,0" ToolTipService.ToolTip="Select copyright image">
+                            <Slider x:Uid="YoloThresholdSlider" x:Name="YoloThresholdSlider" Header="YOLO Threshold" Value="0.15" Minimum="0.01" Maximum="0.50" SmallChange="0.01" LargeChange="0.01" StepFrequency="0.01" SnapsTo="StepValues" Width="200" Margin="4,0,12,0" ValueChanged="YoloThresholdSlider_ValueChanged" IsThumbToolTipEnabled="True" ThumbToolTipValueConverter="{StaticResource TwoDecimalSliderToolTipConverter}" />
+                            <Button x:Uid="MaskTargetSettingsButton" x:Name="MaskTargetSettingsButton" Content="Mask targets..." Margin="8,12,0,0" Click="MaskTargetSettingsButton_Click" />
+                        </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="24,8,0,0">
+                        <CheckBox x:Uid="ExcludeByNameEnabledCheckBox" x:Name="ExcludeByNameEnabledCheckBox" Content="Enable Exclude by Name" IsChecked="False" Checked="ExcludeByNameEnabledCheckBox_CheckedChanged" Unchecked="ExcludeByNameEnabledCheckBox_CheckedChanged" />
+                        <Button x:Uid="OpenExcludeByNameSettingsButton" x:Name="OpenExcludeByNameSettingsButton" Content="Exclude Names Settings..." Margin="4,0,0,0" Click="OpenExcludeByNameSettingsButton_Click" />
+                    </StackPanel>
+                    <!-- Crop Settings (bottom of Setting section) -->
+                    <StackPanel Orientation="Vertical" Margin="20,8,0,0">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <CheckBox x:Uid="CropEnabledCheckBox" x:Name="CropEnabledCheckBox" Content="クロップを有効にする" IsChecked="False" Margin="4,0,8,0" Checked="CropEnabledCheckBox_Checked" Unchecked="CropEnabledCheckBox_Checked" />
+                            <CheckBox x:Uid="Add_Copyright" x:Name="Add_Copyright" Content="Add_Copyright" IsChecked="True" Margin="70,0,0,0" />
+                            <Button x:Uid="SelectCopyrightImageButton" x:Name="SelectCopyrightImageButton" Click="SelectCopyrightImageButton_Click" Margin="6,0,0,4" ToolTipService.ToolTip="Select copyright image">
                                 <FontIcon Glyph="&#xE7C5;" />
-                        </Button>
+                            </Button>
                         </StackPanel>
-                        <StackPanel Orientation="Horizontal" Margin="20,8,0,0">
-                            <CheckBox x:Uid="ExcludeByNameEnabledCheckBox" x:Name="ExcludeByNameEnabledCheckBox" Content="Enable Exclude by Name" IsChecked="False" Checked="ExcludeByNameEnabledCheckBox_CheckedChanged" Unchecked="ExcludeByNameEnabledCheckBox_CheckedChanged" />
-                            <Button x:Uid="OpenExcludeByNameSettingsButton" x:Name="OpenExcludeByNameSettingsButton" Content="Exclude Names Settings..." Margin="12,0,0,0" Click="OpenExcludeByNameSettingsButton_Click" />
+                        <StackPanel Orientation="Horizontal" Margin="8,0,0,0" VerticalAlignment="Center" Visibility="Collapsed">
+                            <NumberBox x:Uid="CropTopNumberBox" x:Name="CropTopNumberBox" Header="上( px )" Value="0" Minimum="0" Maximum="0" ValueChanged="CropNumberBox_ValueChanged" Width="70" SpinButtonPlacementMode="Compact" SmallChange="1" LargeChange="10" />
+                            <NumberBox x:Uid="CropLeftNumberBox" x:Name="CropLeftNumberBox" Header="左( px )" Value="0" Minimum="0" Maximum="0" ValueChanged="CropNumberBox_ValueChanged" Width="70" SpinButtonPlacementMode="Compact" Margin="8,0,0,0" SmallChange="1" LargeChange="10" />
+                            <NumberBox x:Uid="CropRightNumberBox" x:Name="CropRightNumberBox" Header="右( px )" Value="0" Minimum="0" Maximum="0" ValueChanged="CropNumberBox_ValueChanged" Width="70" SpinButtonPlacementMode="Compact" Margin="8,0,0,0" SmallChange="1" LargeChange="10" />
+                            <NumberBox x:Uid="CropBottomNumberBox" x:Name="CropBottomNumberBox" Header="下( px )" Value="0" Minimum="0" Maximum="0" ValueChanged="CropNumberBox_ValueChanged" Width="70" SpinButtonPlacementMode="Compact" Margin="8,0,0,0" SmallChange="1" LargeChange="10" />
                         </StackPanel>
-                        <!-- Crop Settings (bottom of Setting section) -->
-                        <StackPanel Orientation="Vertical" Margin="20,8,0,0">
-                            <StackPanel>
-                                <CheckBox x:Uid="CropEnabledCheckBox" x:Name="CropEnabledCheckBox" Content="クロップを有効にする" IsChecked="False" Margin="0,0,8,0" Checked="CropEnabledCheckBox_Checked" Unchecked="CropEnabledCheckBox_Checked" />
-                            </StackPanel>
-                            <StackPanel Orientation="Horizontal" Margin="8,0,0,0" VerticalAlignment="Center" Visibility="Collapsed">
-                                <NumberBox x:Uid="CropTopNumberBox" x:Name="CropTopNumberBox" Header="上( px )" Value="0" Minimum="0" Maximum="0" ValueChanged="CropNumberBox_ValueChanged" Width="70" SpinButtonPlacementMode="Compact" SmallChange="1" LargeChange="10" />
-                                <NumberBox x:Uid="CropLeftNumberBox" x:Name="CropLeftNumberBox" Header="左( px )" Value="0" Minimum="0" Maximum="0" ValueChanged="CropNumberBox_ValueChanged" Width="70" SpinButtonPlacementMode="Compact" Margin="8,0,0,0" SmallChange="1" LargeChange="10" />
-                                <NumberBox x:Uid="CropRightNumberBox" x:Name="CropRightNumberBox" Header="右( px )" Value="0" Minimum="0" Maximum="0" ValueChanged="CropNumberBox_ValueChanged" Width="70" SpinButtonPlacementMode="Compact" Margin="8,0,0,0" SmallChange="1" LargeChange="10" />
-                                <NumberBox x:Uid="CropBottomNumberBox" x:Name="CropBottomNumberBox" Header="下( px )" Value="0" Minimum="0" Maximum="0" ValueChanged="CropNumberBox_ValueChanged" Width="70" SpinButtonPlacementMode="Compact" Margin="8,0,0,0" SmallChange="1" LargeChange="10" />
-                            </StackPanel>
-                        </StackPanel>   
-
- 
+                    </StackPanel>
 
                     <!-- Movie Rendering Section -->
                     <Line Stroke="Gray" X1="10" Y1="0" X2="470" Y2="0" StrokeThickness="1" Margin="0,8,0,0"/>
@@ -247,7 +246,7 @@
                             <StackPanel Margin="8,4,0,0">
                                 <CheckBox x:Uid="ForX" x:Name="ForX" Content="ForX(Twitter)" ToolTipService.ToolTip ="Limit width 1280px / 30FPS"  IsChecked="False" IsEnabled="False" Margin="4,0,0,0" />
                             </StackPanel>
-                            <StackPanel Margin="8,4,0,0">
+                            <StackPanel Margin="0,4,0,0">
                                 <CheckBox x:Uid="DisableAudio" x:Name="DisableAudio" Content="No Audio" ToolTipService.ToolTip="When checked, output video has no audio track" IsChecked="False" Margin="4,0,0,0" />
                             </StackPanel>
                         </StackPanel>

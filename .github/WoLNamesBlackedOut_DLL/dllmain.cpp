@@ -167,6 +167,10 @@ extern "C" __declspec(dllexport) int __stdcall ProcessVideo(
     int ocr_max_rois_per_frame,
     float text_similarity_threshold,
     const char* mask_exclude_text_csv,
+    bool mask_class_overhead_enabled,
+    bool mask_class_chat_enabled,
+    bool mask_class_party_enabled,
+    bool mask_class_general_enabled,
     int blacked_image_mode,
     const char* blacked_image_path,
     float blacked_image_random_min_scale,
@@ -313,6 +317,10 @@ extern "C" __declspec(dllexport) int __stdcall ProcessVideo(
     config.ocr_max_rois_per_frame = std::clamp(ocr_max_rois_per_frame, 1, 32);
     config.text_similarity_threshold = std::clamp(text_similarity_threshold, 0.50f, 1.00f);
     config.mask_exclude_text_csv = wexcludeCsv.c_str();
+    config.mask_class_overhead_enabled = mask_class_overhead_enabled;
+    config.mask_class_chat_enabled = mask_class_chat_enabled;
+    config.mask_class_party_enabled = mask_class_party_enabled;
+    config.mask_class_general_enabled = mask_class_general_enabled;
     config.ocr_model_path = wocrModelPath.c_str();
     config.ocr_dict_path = wocrDictPath.c_str();
     config.fixed_rect_count = count;

@@ -42,6 +42,30 @@ static double ElapsedMs(const std::chrono::high_resolution_clock::time_point& st
 	return std::chrono::duration<double, std::milli>(end - start).count();
 }
 
+static int ResolveClassBitForMask(int class_id) {
+	switch (class_id) {
+	case 0:
+		return 1 << 0; // overhead
+	case 1:
+		return 1 << 1; // chat
+	case 2:
+		return 1 << 2; // party
+	case 3:
+		return 1 << 3; // general
+	default:
+		return 1 << 3; // unknown => general
+	}
+}
+
+static bool IsVideoMaskClassEnabled(const PipelineConfig& config, int class_id) {
+	const int classBit = ResolveClassBitForMask(class_id);
+	if (classBit == (1 << 0) && !config.mask_class_overhead_enabled) return false;
+	if (classBit == (1 << 1) && !config.mask_class_chat_enabled) return false;
+	if (classBit == (1 << 2) && !config.mask_class_party_enabled) return false;
+	if (classBit == (1 << 3) && !config.mask_class_general_enabled) return false;
+	return true;
+}
+
 // Letterboxシェーダーのソースコード
 static const char* letterbox_vertex_shader_src = 
     "cbuffer ConstantBuffer : register(b0) {\n"
@@ -1226,21 +1250,29 @@ void VideoPipeline::InferenceThread() {
 
 					// 検出結果を処理
 					auto detections = PostProcessDetections(output_data, preproc, frame.width, frame.height);
-					std::vector<Detection> mask_detections = detections;
+					std::vector<Detection> class_filtered_detections;
+					class_filtered_detections.reserve(detections.size());
+					for (const auto& det : detections) {
+						if (IsVideoMaskClassEnabled(config_, det.class_id)) {
+							class_filtered_detections.push_back(det);
+						}
+					}
+					std::vector<Detection> mask_detections = class_filtered_detections;
+					PipelineLogFmt("[MaskClass][Video] frame=%d det_in=%zu det_after=%zu\n", loop_count, detections.size(), class_filtered_detections.size());
 
 					if (config_.exclude_by_name_enabled && tracker_) {
 						inference_frame_counter_++;
 
 						std::vector<ByteTrackInterop::DetectionPtr> tracker_inputs;
-						tracker_inputs.reserve(detections.size());
-						for (const auto& det : detections) {
+						tracker_inputs.reserve(class_filtered_detections.size());
+						for (const auto& det : class_filtered_detections) {
 							tracker_inputs.push_back(std::make_shared<ByteTrackInterop::Detection>(det));
 						}
 
 						auto tracked = tracker_->update(tracker_inputs);
 						PipelineLogFmt("[ExcludeByName][Video] frame=%d det_in=%zu tracked=%zu\n",
 							loop_count,
-							detections.size(),
+							class_filtered_detections.size(),
 							tracked.size());
 						size_t ocr_queue_depth_snapshot = 0;
 						{

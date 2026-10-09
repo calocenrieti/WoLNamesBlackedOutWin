@@ -131,6 +131,14 @@ namespace WoLNamesBlackedOut
         private int ocrMaxRoisPerFrame = 6;
         private int textSimilarityPercent = 85;
         private string maskExcludeTextCsv = string.Empty;
+        private bool maskOverheadEnabled = true;
+        private bool maskChatEnabled = true;
+        private bool maskPartyEnabled = true;
+        private bool maskGeneralEnabled = true;
+        private const int MaskClassOverheadBit = 1 << 0;
+        private const int MaskClassChatBit = 1 << 1;
+        private const int MaskClassPartyBit = 1 << 2;
+        private const int MaskClassGeneralBit = 1 << 3;
         private ImageMaskPlacementMode blackedOutImageMaskMode = ImageMaskPlacementMode.Fit;
         private string blackedOutImageMaskPath = string.Empty;
         private bool useDefaultBlackedOutImageMask = true;
@@ -1022,6 +1030,7 @@ namespace WoLNamesBlackedOut
                     fixedFrameImageMaskSettings.randomMaxScale,
                     fixedFrameImageMaskSettings.randomLayoutChangeIntervalFrames,
                     fixedFrameImageMaskSettings.randomAllowOverflow,
+                    GetMaskClassFlags(),
                     ShouldBoostBlurForCpuPipeline());
 
                 if (result.Result != 0 || isWindowClosing)
@@ -2138,6 +2147,30 @@ namespace WoLNamesBlackedOut
                 {
                     textSimilarityPercent = Math.Clamp(parsedTextSimilarityPercent, 50, 100);
                 }
+            }
+
+            if (localSettings != null && localSettings.Values.TryGetValue("MaskClassOverheadEnabled", out object maskClassOverheadValue)
+                && bool.TryParse(maskClassOverheadValue?.ToString(), out bool parsedMaskClassOverhead))
+            {
+                maskOverheadEnabled = parsedMaskClassOverhead;
+            }
+
+            if (localSettings != null && localSettings.Values.TryGetValue("MaskClassChatEnabled", out object maskClassChatValue)
+                && bool.TryParse(maskClassChatValue?.ToString(), out bool parsedMaskClassChat))
+            {
+                maskChatEnabled = parsedMaskClassChat;
+            }
+
+            if (localSettings != null && localSettings.Values.TryGetValue("MaskClassPartyEnabled", out object maskClassPartyValue)
+                && bool.TryParse(maskClassPartyValue?.ToString(), out bool parsedMaskClassParty))
+            {
+                maskPartyEnabled = parsedMaskClassParty;
+            }
+
+            if (localSettings != null && localSettings.Values.TryGetValue("MaskClassGeneralEnabled", out object maskClassGeneralValue)
+                && bool.TryParse(maskClassGeneralValue?.ToString(), out bool parsedMaskClassGeneral))
+            {
+                maskGeneralEnabled = parsedMaskClassGeneral;
             }
 
             if (localSettings != null && localSettings.Values.TryGetValue("BlackedOutImageMaskMode", out object imageMaskModeValue))
@@ -3358,6 +3391,10 @@ namespace WoLNamesBlackedOut
                 try { localSettings.Values["OcrMaxRoisPerFrame"] = ocrMaxRoisPerFrame; } catch { }
                 try { localSettings.Values["TextSimilarityPercent"] = textSimilarityPercent; } catch { }
                 try { localSettings.Values["MaskExcludeTextCsv"] = maskExcludeTextCsv ?? string.Empty; } catch { }
+                try { localSettings.Values["MaskClassOverheadEnabled"] = maskOverheadEnabled; } catch { }
+                try { localSettings.Values["MaskClassChatEnabled"] = maskChatEnabled; } catch { }
+                try { localSettings.Values["MaskClassPartyEnabled"] = maskPartyEnabled; } catch { }
+                try { localSettings.Values["MaskClassGeneralEnabled"] = maskGeneralEnabled; } catch { }
                 try { localSettings.Values["BlackedOutImageMaskMode"] = (int)blackedOutImageMaskMode; } catch { }
                 try { localSettings.Values["BlackedOutImageMaskPath"] = blackedOutImageMaskPath ?? string.Empty; } catch { }
                 try { localSettings.Values["UseDefaultBlackedOutImageMask"] = useDefaultBlackedOutImageMask; } catch { }
@@ -3737,6 +3774,7 @@ namespace WoLNamesBlackedOut
                         fixedFrameImageMaskSettings.randomMaxScale,
                         fixedFrameImageMaskSettings.randomLayoutChangeIntervalFrames,
                         fixedFrameImageMaskSettings.randomAllowOverflow,
+                        GetMaskClassFlags(),
                         ShouldBoostBlurForCpuPipeline());
 
                     last_preview_image = string.Empty;
@@ -3914,6 +3952,7 @@ namespace WoLNamesBlackedOut
                     fixedFrameImageMaskSettings.randomMaxScale,
                     fixedFrameImageMaskSettings.randomLayoutChangeIntervalFrames,
                     fixedFrameImageMaskSettings.randomAllowOverflow,
+                    GetMaskClassFlags(),
                     ShouldBoostBlurForCpuPipeline()));
 
                 if (isWindowClosing || !previewSessionOpen)
@@ -4154,6 +4193,10 @@ namespace WoLNamesBlackedOut
                 int ocr_max_rois_per_frame,
                 float text_similarity_threshold,
                 [MarshalAs(UnmanagedType.LPUTF8Str)] string mask_exclude_text_csv,
+                [MarshalAs(UnmanagedType.I1)] bool mask_class_overhead_enabled,
+                [MarshalAs(UnmanagedType.I1)] bool mask_class_chat_enabled,
+                [MarshalAs(UnmanagedType.I1)] bool mask_class_party_enabled,
+                [MarshalAs(UnmanagedType.I1)] bool mask_class_general_enabled,
                 int blacked_image_mode,
                 [MarshalAs(UnmanagedType.LPUTF8Str)] string blacked_image_path,
                 float blacked_image_random_min_scale,
@@ -4569,6 +4612,10 @@ namespace WoLNamesBlackedOut
                 int ocrMaxRoisPerFrame = 6,
                 float textSimilarityThreshold = 0.85f,
                 string maskExcludeTextCsv = "",
+                bool maskClassOverheadEnabled = true,
+                bool maskClassChatEnabled = true,
+                bool maskClassPartyEnabled = true,
+                bool maskClassGeneralEnabled = true,
                 int blackedImageMode = 0,
                 string blackedImagePath = "",
                 float blackedImageRandomMinScale = 0.75f,
@@ -4598,6 +4645,10 @@ namespace WoLNamesBlackedOut
                         ocrMaxRoisPerFrame,
                         textSimilarityThreshold,
                         maskExcludeTextCsv ?? string.Empty,
+                        maskClassOverheadEnabled,
+                        maskClassChatEnabled,
+                        maskClassPartyEnabled,
+                        maskClassGeneralEnabled,
                         blackedImageMode,
                         blackedImagePath ?? string.Empty,
                         blackedImageRandomMinScale,
@@ -4635,6 +4686,10 @@ namespace WoLNamesBlackedOut
                  int ocrMaxRoisPerFrame = 6,
                   float textSimilarityThreshold = 0.85f,
                   string maskExcludeTextCsv = "",
+                  bool maskClassOverheadEnabled = true,
+                  bool maskClassChatEnabled = true,
+                  bool maskClassPartyEnabled = true,
+                  bool maskClassGeneralEnabled = true,
                    int blackedImageMode = 0,
                    string blackedImagePath = "",
                    float blackedImageRandomMinScale = 0.75f,
@@ -4663,6 +4718,10 @@ namespace WoLNamesBlackedOut
                     ocrMaxRoisPerFrame,
                     textSimilarityThreshold,
                     maskExcludeTextCsv,
+                    maskClassOverheadEnabled,
+                    maskClassChatEnabled,
+                    maskClassPartyEnabled,
+                    maskClassGeneralEnabled,
                     blackedImageMode,
                     blackedImagePath,
                     blackedImageRandomMinScale,
@@ -4710,6 +4769,7 @@ namespace WoLNamesBlackedOut
                 float fixedImageRandomMaxScale = 2.0f,
                 int fixedImageRandomIntervalFrames = 90,
                 bool fixedImageRandomAllowOverflow = false,
+                int maskClassFlags = 15,
                 bool boostBlurForCpuPipeline = false)
             {
                 return Task.Run(() =>
@@ -4779,7 +4839,7 @@ namespace WoLNamesBlackedOut
                             fixed_image_random_max_scale = fixedImageRandomMaxScale,
                             fixed_image_random_interval_frames = fixedImageRandomIntervalFrames,
                             fixed_image_random_allow_overflow = fixedImageRandomAllowOverflow,
-                            reserved = new int[4],
+                            reserved = new int[4] { maskClassFlags, 1, 0, 0 },
                         };
                         maskParams.blackedout_param = NormalizeMaskParamForNative(maskParams.blacked_type, blackedout_param, boostBlurForCpuPipeline);
                         maskParams.fixedFrame_param = NormalizeMaskParamForNative(maskParams.fixmask_type, fixedFrame_param, boostBlurForCpuPipeline);
@@ -4878,6 +4938,7 @@ namespace WoLNamesBlackedOut
                 float fixedImageRandomMaxScale = 2.0f,
                 int fixedImageRandomIntervalFrames = 90,
                 bool fixedImageRandomAllowOverflow = false,
+                int maskClassFlags = 15,
                 bool boostBlurForCpuPipeline = false)
             {
                 var nativeRects = new RectInfo[64];
@@ -4919,7 +4980,7 @@ namespace WoLNamesBlackedOut
                     fixed_image_random_max_scale = fixedImageRandomMaxScale,
                     fixed_image_random_interval_frames = fixedImageRandomIntervalFrames,
                     fixed_image_random_allow_overflow = fixedImageRandomAllowOverflow,
-                    reserved = new int[4],
+                    reserved = new int[4] { maskClassFlags, 1, 0, 0 },
                 };
                 maskParams.blackedout_param = NormalizeMaskParamForNative(maskParams.blacked_type, blackedout_param, boostBlurForCpuPipeline);
                 maskParams.fixedFrame_param = NormalizeMaskParamForNative(maskParams.fixmask_type, fixedFrame_param, boostBlurForCpuPipeline);
@@ -5279,6 +5340,7 @@ namespace WoLNamesBlackedOut
                     fixedFrameImageMaskSettings.randomMaxScale,
                     fixedFrameImageMaskSettings.randomLayoutChangeIntervalFrames,
                     fixedFrameImageMaskSettings.randomAllowOverflow,
+                    GetMaskClassFlags(),
                     ShouldBoostBlurForCpuPipeline()));
 
                 if (isWindowClosing || !previewSessionOpen)
@@ -5572,6 +5634,7 @@ namespace WoLNamesBlackedOut
                 fixedFrameImageMaskSettings.randomMaxScale,
                 fixedFrameImageMaskSettings.randomLayoutChangeIntervalFrames,
                 fixedFrameImageMaskSettings.randomAllowOverflow,
+                GetMaskClassFlags(),
                 ShouldBoostBlurForCpuPipeline()));
 
             if (updateResult != 0)
@@ -5665,6 +5728,7 @@ namespace WoLNamesBlackedOut
                 fixedFrameImageMaskSettings.randomMaxScale,
                 fixedFrameImageMaskSettings.randomLayoutChangeIntervalFrames,
                 fixedFrameImageMaskSettings.randomAllowOverflow,
+                GetMaskClassFlags(),
                 ShouldBoostBlurForCpuPipeline());
 
             if (result.Result != 0)
@@ -6239,7 +6303,7 @@ namespace WoLNamesBlackedOut
             var fixedFrameImageMaskSettings = GetFixedFrameImageMaskNativeSettings();
             try
             {
-                previewFrame = await FrameProcessor.Runpreview_apiAsync(v_file_path, rectInfos, rectInfos.Length, BlackedOut_color_icon_color_info, FixedFrame_color_icon_color_Info, Add_Copyright.IsChecked.Value, GetComboText(BlackedOut_ComboBox, "Solid"), GetComboText(FixedFrame_ComboBox, "Solid"), (int)BlackedOutSlideBar.Value, (int)FixedFrameSlideBar.Value, GetYoloThreshold(), copyrightImagePath ?? string.Empty, copyrightOffsetX, copyrightOffsetY, (float)copyrightZoomScale, blackedOutImageMaskSettings.mode, blackedOutImageMaskSettings.path, blackedOutImageMaskSettings.randomMinScale, blackedOutImageMaskSettings.randomMaxScale, blackedOutImageMaskSettings.randomLayoutChangeIntervalFrames, blackedOutImageMaskSettings.randomAllowOverflow, fixedFrameImageMaskSettings.mode, fixedFrameImageMaskSettings.path, fixedFrameImageMaskSettings.randomMinScale, fixedFrameImageMaskSettings.randomMaxScale, fixedFrameImageMaskSettings.randomLayoutChangeIntervalFrames, fixedFrameImageMaskSettings.randomAllowOverflow, ShouldBoostBlurForCpuPipeline());
+                previewFrame = await FrameProcessor.Runpreview_apiAsync(v_file_path, rectInfos, rectInfos.Length, BlackedOut_color_icon_color_info, FixedFrame_color_icon_color_Info, Add_Copyright.IsChecked.Value, GetComboText(BlackedOut_ComboBox, "Solid"), GetComboText(FixedFrame_ComboBox, "Solid"), (int)BlackedOutSlideBar.Value, (int)FixedFrameSlideBar.Value, GetYoloThreshold(), copyrightImagePath ?? string.Empty, copyrightOffsetX, copyrightOffsetY, (float)copyrightZoomScale, blackedOutImageMaskSettings.mode, blackedOutImageMaskSettings.path, blackedOutImageMaskSettings.randomMinScale, blackedOutImageMaskSettings.randomMaxScale, blackedOutImageMaskSettings.randomLayoutChangeIntervalFrames, blackedOutImageMaskSettings.randomAllowOverflow, fixedFrameImageMaskSettings.mode, fixedFrameImageMaskSettings.path, fixedFrameImageMaskSettings.randomMinScale, fixedFrameImageMaskSettings.randomMaxScale, fixedFrameImageMaskSettings.randomLayoutChangeIntervalFrames, fixedFrameImageMaskSettings.randomAllowOverflow, GetMaskClassFlags(), ShouldBoostBlurForCpuPipeline());
                 previewApiSucceeded = previewFrame.Result == 0;
             }
             finally
@@ -6491,7 +6555,7 @@ namespace WoLNamesBlackedOut
                 var fixedFrameImageMaskSettings = GetFixedFrameImageMaskNativeSettings();
 
                 {
-                    processResult = await FrameProcessor.RunDmlMainAsync(video_temp_filename_1, video_temp_filename_2, effectiveCodec, hwaccel, v_width, v_height, v_fps, start_time, end_time, GetYoloThreshold(), v_color_primaries, rectInfos, rectInfos.Length, BlackedOut_color_icon_color_info, FixedFrame_color_icon_color_Info, Add_Copyright.IsChecked.Value, FrameProcessor.MaskTypeToNative(FrameProcessor.GetMaskTypeKind(GetComboText(BlackedOut_ComboBox, "Solid"))), FrameProcessor.MaskTypeToNative(FrameProcessor.GetMaskTypeKind(GetComboText(FixedFrame_ComboBox, "Solid"))), (int)BlackedOutSlideBar.Value, (int)FixedFrameSlideBar.Value, copyrightOffsetX, copyrightOffsetY, (float)copyrightZoomScale, copyrightImagePath ?? string.Empty, v_bitrate, preset, disableAudio, CropEnabledCheckBox?.IsChecked == true ? cropTop : 0, CropEnabledCheckBox?.IsChecked == true ? cropLeft : 0, CropEnabledCheckBox?.IsChecked == true ? cropRight : 0, CropEnabledCheckBox?.IsChecked == true ? cropBottom : 0, excludeByNameEnabled, ocrExpandPixels, ocrMaxRoisPerFrame, GetTextSimilarityThreshold(), maskExcludeTextCsv, blackedOutImageMaskSettings.mode, blackedOutImageMaskSettings.path, blackedOutImageMaskSettings.randomMinScale, blackedOutImageMaskSettings.randomMaxScale, blackedOutImageMaskSettings.randomLayoutChangeIntervalFrames, blackedOutImageMaskSettings.randomAllowOverflow, fixedFrameImageMaskSettings.mode, fixedFrameImageMaskSettings.path, fixedFrameImageMaskSettings.randomMinScale, fixedFrameImageMaskSettings.randomMaxScale, fixedFrameImageMaskSettings.randomLayoutChangeIntervalFrames, fixedFrameImageMaskSettings.randomAllowOverflow, ShouldBoostBlurForCpuPipeline());
+                    processResult = await FrameProcessor.RunDmlMainAsync(video_temp_filename_1, video_temp_filename_2, effectiveCodec, hwaccel, v_width, v_height, v_fps, start_time, end_time, GetYoloThreshold(), v_color_primaries, rectInfos, rectInfos.Length, BlackedOut_color_icon_color_info, FixedFrame_color_icon_color_Info, Add_Copyright.IsChecked.Value, FrameProcessor.MaskTypeToNative(FrameProcessor.GetMaskTypeKind(GetComboText(BlackedOut_ComboBox, "Solid"))), FrameProcessor.MaskTypeToNative(FrameProcessor.GetMaskTypeKind(GetComboText(FixedFrame_ComboBox, "Solid"))), (int)BlackedOutSlideBar.Value, (int)FixedFrameSlideBar.Value, copyrightOffsetX, copyrightOffsetY, (float)copyrightZoomScale, copyrightImagePath ?? string.Empty, v_bitrate, preset, disableAudio, CropEnabledCheckBox?.IsChecked == true ? cropTop : 0, CropEnabledCheckBox?.IsChecked == true ? cropLeft : 0, CropEnabledCheckBox?.IsChecked == true ? cropRight : 0, CropEnabledCheckBox?.IsChecked == true ? cropBottom : 0, excludeByNameEnabled, ocrExpandPixels, ocrMaxRoisPerFrame, GetTextSimilarityThreshold(), maskExcludeTextCsv, maskOverheadEnabled, maskChatEnabled, maskPartyEnabled, maskGeneralEnabled, blackedOutImageMaskSettings.mode, blackedOutImageMaskSettings.path, blackedOutImageMaskSettings.randomMinScale, blackedOutImageMaskSettings.randomMaxScale, blackedOutImageMaskSettings.randomLayoutChangeIntervalFrames, blackedOutImageMaskSettings.randomAllowOverflow, fixedFrameImageMaskSettings.mode, fixedFrameImageMaskSettings.path, fixedFrameImageMaskSettings.randomMinScale, fixedFrameImageMaskSettings.randomMaxScale, fixedFrameImageMaskSettings.randomLayoutChangeIntervalFrames, fixedFrameImageMaskSettings.randomAllowOverflow, ShouldBoostBlurForCpuPipeline());
                 }
 
                 stopwatch.Stop();
@@ -7333,6 +7397,80 @@ namespace WoLNamesBlackedOut
                 OpenExcludeByNameSettingsButton.IsEnabled = excludeByNameEnabled;
             }
             _ = RefreshCurrentPreviewFrameIfPausedAsync();
+        }
+
+        private int GetMaskClassFlags()
+        {
+            int flags = 0;
+            if (maskOverheadEnabled) flags |= MaskClassOverheadBit;
+            if (maskChatEnabled) flags |= MaskClassChatBit;
+            if (maskPartyEnabled) flags |= MaskClassPartyBit;
+            if (maskGeneralEnabled) flags |= MaskClassGeneralBit;
+            return flags;
+        }
+
+        private async void MaskTargetSettingsButton_Click(object sender, RoutedEventArgs e)
+        {
+            bool isJapanese = IsJapaneseUiCulture();
+
+            var overheadCheckBox = new CheckBox
+            {
+                Content = isJapanese ? "キャラクター" : "Character",
+                IsChecked = maskOverheadEnabled,
+                Margin = new Thickness(0, 0, 0, 8)
+            };
+            var chatCheckBox = new CheckBox
+            {
+                Content = isJapanese ? "チャット欄" : "Chat panel",
+                IsChecked = maskChatEnabled,
+                Margin = new Thickness(0, 0, 0, 8)
+            };
+            var partyCheckBox = new CheckBox
+            {
+                Content = isJapanese ? "パーティリスト" : "Party list",
+                IsChecked = maskPartyEnabled,
+                Margin = new Thickness(0, 0, 0, 8)
+            };
+            var generalCheckBox = new CheckBox
+            {
+                Content = isJapanese ? "その他一般" : "General (others)",
+                IsChecked = maskGeneralEnabled
+            };
+
+            var panel = new StackPanel
+            {
+                Orientation = Orientation.Vertical,
+                Children =
+                {
+                    overheadCheckBox,
+                    chatCheckBox,
+                    partyCheckBox,
+                    generalCheckBox
+                }
+            };
+
+            var dialog = new ContentDialog
+            {
+                Title = isJapanese ? "黒塗り対象" : "Mask targets",
+                Content = panel,
+                PrimaryButtonText = "OK",
+                CloseButtonText = isJapanese ? "キャンセル" : "Cancel",
+                DefaultButton = ContentDialogButton.Primary,
+                XamlRoot = this.Content.XamlRoot
+            };
+
+            ContentDialogResult result = await dialog.ShowAsync();
+            if (result != ContentDialogResult.Primary)
+            {
+                return;
+            }
+
+            maskOverheadEnabled = overheadCheckBox.IsChecked == true;
+            maskChatEnabled = chatCheckBox.IsChecked == true;
+            maskPartyEnabled = partyCheckBox.IsChecked == true;
+            maskGeneralEnabled = generalCheckBox.IsChecked == true;
+
+            _ = RefreshMaskSettingPreviewAsync();
         }
 
         private string GetImageMaskModeDisplayName(ImageMaskPlacementMode mode)
