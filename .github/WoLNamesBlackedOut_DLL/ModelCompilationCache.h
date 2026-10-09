@@ -213,23 +213,37 @@ inline bool ComputeFileSha256(const std::wstring& path, std::string& out_hex)
 	return success;
 }
 
-inline bool ReadMetadataSourceHash(const std::wstring& metadata_path, std::string& out_hash)
+inline bool ReadMetadataValue(const std::wstring& metadata_path, const char* key, std::string& out_value)
 {
+	if (!key || key[0] == '\0') {
+		return false;
+	}
+
 	std::ifstream input(std::filesystem::path(metadata_path), std::ios::binary);
 	if (!input) {
 		return false;
 	}
 
+	const std::string prefix = std::string(key) + "=";
 	std::string line;
 	while (std::getline(input, line)) {
-		constexpr char key[] = "source_sha256=";
-		if (line.rfind(key, 0) == 0) {
-			out_hash = line.substr(sizeof(key) - 1);
-			return !out_hash.empty();
+		if (line.rfind(prefix, 0) == 0) {
+			out_value = line.substr(prefix.size());
+			return !out_value.empty();
 		}
 	}
 
 	return false;
+}
+
+inline bool ReadMetadataSourceHash(const std::wstring& metadata_path, std::string& out_hash)
+{
+	return ReadMetadataValue(metadata_path, "source_sha256", out_hash);
+}
+
+inline std::string GetCurrentOrtApiVersionString()
+{
+	return std::to_string(ORT_API_VERSION);
 }
 
 inline bool SupportsPersistentCompileCache(const std::string& ep_name)
@@ -339,6 +353,29 @@ inline bool PrepareCacheDecision(
 		return true;
 	}
 
+	std::string cached_ep_name;
+	if (!ReadMetadataValue(out_decision.metadata_path, "ep_name", cached_ep_name)) {
+		out_decision.reason = "cache-miss:ep-missing";
+		return true;
+	}
+
+	if (cached_ep_name != ep_name) {
+		out_decision.reason = "cache-miss:ep-mismatch";
+		return true;
+	}
+
+	std::string cached_ort_api_version;
+	if (!ReadMetadataValue(out_decision.metadata_path, "ort_api_version", cached_ort_api_version)) {
+		out_decision.reason = "cache-miss:ort-api-version-missing";
+		return true;
+	}
+
+	const std::string current_ort_api_version = GetCurrentOrtApiVersionString();
+	if (cached_ort_api_version != current_ort_api_version) {
+		out_decision.reason = "cache-miss:ort-api-version-mismatch";
+		return true;
+	}
+
 	out_decision.has_valid_compiled_model = true;
 	out_decision.reason = "cache-hit";
 	return true;
@@ -375,6 +412,7 @@ inline bool WriteCacheMetadata(const CacheDecision& decision, std::string& out_e
 	output << "source_sha256=" << decision.source_model_sha256 << "\n";
 	output << "source_model=" << WideToUtf8(decision.source_model_path) << "\n";
 	output << "ep_name=" << decision.ep_name << "\n";
+	output << "ort_api_version=" << GetCurrentOrtApiVersionString() << "\n";
 	output << "compiled_model=" << WideToUtf8(decision.compiled_model_path) << "\n";
 	output << "compiled_utc=" << timestamp << "\n";
 	output.flush();

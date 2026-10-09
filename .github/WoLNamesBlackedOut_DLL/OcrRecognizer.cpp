@@ -189,6 +189,16 @@ bool IsInvalidGraphException(const Ort::Exception& ex)
 	return message.find("INVALID_GRAPH") != std::string::npos;
 }
 
+bool IsCompiledModelUnsupportedByExecutionProviderException(const Ort::Exception& ex)
+{
+	std::string message = ex.what();
+	std::transform(message.begin(), message.end(), message.begin(), [](unsigned char c) {
+		return static_cast<char>(std::toupper(c));
+	});
+
+	return message.find("COMPILED MODEL IS NOT SUPPORTED BY EXECUTION PROVIDER") != std::string::npos;
+}
+
 bool IsSamePathInsensitive(const std::wstring& lhs, const std::wstring& rhs)
 {
 	if (lhs.size() != rhs.size()) {
@@ -856,8 +866,25 @@ bool OcrRecognizer::LoadModel(const wchar_t* model_path, bool prefer_gpu)
 					std::string cache_path_utf8 = ModelCompilationCache::WideToUtf8(cache_path_w);
 					if (!cache_path_utf8.empty()) {
 						trt_rtx_options["nv_runtime_cache_path"] = cache_path_utf8;
+						char dbg[512] = {};
+						snprintf(dbg, sizeof(dbg), "[OcrRecognizer] TensorRT-RTX runtime cache (LocalFolder): %s\n", cache_path_utf8.c_str());
+						OutputDebugStringA(dbg);
 					}
-				} catch (...) {
+				}
+				catch (...) {
+					char cache_path[MAX_PATH] = {};
+					if (GetModuleFileNameA(nullptr, cache_path, MAX_PATH)) {
+						char* last_slash = strrchr(cache_path, '\\');
+						if (last_slash) {
+							*(last_slash + 1) = '\0';
+							strcat_s(cache_path, sizeof(cache_path), "trt_rtx_cache");
+							CreateDirectoryA(cache_path, nullptr);
+							trt_rtx_options["nv_runtime_cache_path"] = std::string(cache_path);
+							char dbg[512] = {};
+							snprintf(dbg, sizeof(dbg), "[OcrRecognizer] TensorRT-RTX runtime cache (fallback): %s\n", cache_path);
+							OutputDebugStringA(dbg);
+						}
+					}
 				}
 
 				if (try_append_catalog_ep("NvTensorRTRTXExecutionProvider", trt_rtx_options)) {
@@ -943,7 +970,7 @@ bool OcrRecognizer::LoadModel(const wchar_t* model_path, bool prefer_gpu)
 						char dbg_cache_compile_failed[512] = {};
 						snprintf(dbg_cache_compile_failed, sizeof(dbg_cache_compile_failed), "[OcrRecognizer] CompileModel failed (%s). Falling back to source model.\n", cache_error.c_str());
 						OutputDebugStringA(dbg_cache_compile_failed);
-						ReportStatus("OCR compile fallback to source model: %s", ep_display_name.c_str());
+						ReportStatus("OCR compile fallback to source model: %s (%s)", ep_display_name.c_str(), cache_error.c_str());
 						session_model_path = model_path;
 					}
 				}
@@ -951,6 +978,7 @@ bool OcrRecognizer::LoadModel(const wchar_t* model_path, bool prefer_gpu)
 				char dbg_cache_prepare_failed[512] = {};
 				snprintf(dbg_cache_prepare_failed, sizeof(dbg_cache_prepare_failed), "[OcrRecognizer] Prepare compile cache failed (%s).\n", cache_error.c_str());
 				OutputDebugStringA(dbg_cache_prepare_failed);
+				ReportStatus("OCR prepare compile cache failed: %s", cache_error.c_str());
 			}
 		}
 
@@ -971,8 +999,8 @@ bool OcrRecognizer::LoadModel(const wchar_t* model_path, bool prefer_gpu)
 				throw;
 			}
 
-			if (IsInvalidGraphException(ex)) {
-				OutputDebugStringA("[OcrRecognizer] Compiled model became invalid (INVALID_GRAPH). Recompiling cache.\n");
+			if (IsInvalidGraphException(ex) || IsCompiledModelUnsupportedByExecutionProviderException(ex)) {
+				OutputDebugStringA("[OcrRecognizer] Compiled model invalid or unsupported by EP. Recompiling cache.\n");
 				ReportStatus("OCR compiled model invalidated. Recompiling: %s", ep_display_name.c_str());
 				std::string remove_error;
 				ModelCompilationCache::RemoveCacheArtifacts(compile_cache_decision, remove_error);
@@ -982,7 +1010,7 @@ bool OcrRecognizer::LoadModel(const wchar_t* model_path, bool prefer_gpu)
 					ReportStatus("OCR compiled cache regenerated: %s", ep_display_name.c_str());
 				} else {
 					char dbg_retry_fail[512] = {};
-					snprintf(dbg_retry_fail, sizeof(dbg_retry_fail), "[OcrRecognizer] Recompile after INVALID_GRAPH failed (%s). Fallback to source model.\n", compile_error.c_str());
+					snprintf(dbg_retry_fail, sizeof(dbg_retry_fail), "[OcrRecognizer] Recompile after compiled model invalidation failed (%s). Fallback to source model.\n", compile_error.c_str());
 					OutputDebugStringA(dbg_retry_fail);
 					ReportStatus("OCR recompile failed. Fallback to source model: %s", ep_display_name.c_str());
 					session_ = create_session(model_path);

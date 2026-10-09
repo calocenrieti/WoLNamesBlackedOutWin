@@ -70,6 +70,14 @@ bool IsInvalidGraphException(const Ort::Exception& ex) {
 	return message.find("INVALID_GRAPH") != std::string::npos;
 }
 
+bool IsCompiledModelUnsupportedByExecutionProviderException(const Ort::Exception& ex) {
+	std::string message = ex.what();
+	std::transform(message.begin(), message.end(), message.begin(), [](unsigned char c) {
+		return static_cast<char>(std::toupper(c));
+	});
+	return message.find("COMPILED MODEL IS NOT SUPPORTED BY EXECUTION PROVIDER") != std::string::npos;
+}
+
 bool IsSamePathInsensitive(const std::wstring& lhs, const std::wstring& rhs) {
 	if (lhs.size() != rhs.size()) {
 		return false;
@@ -927,8 +935,8 @@ bool WinMLUtils::LoadModel(const wchar_t* model_path) {
 				throw;
 			}
 
-			if (IsInvalidGraphException(ex)) {
-				OutputDebugStringA("[WinMLUtils] Compiled model became invalid (INVALID_GRAPH). Recompiling cache.\n");
+			if (IsInvalidGraphException(ex) || IsCompiledModelUnsupportedByExecutionProviderException(ex)) {
+				OutputDebugStringA("[WinMLUtils] Compiled model invalid or unsupported by EP. Recompiling cache.\n");
 				ReportStatus("Compiled model invalidated. Recompiling: %s", ep_display_name.c_str());
 				std::string remove_error;
 				ModelCompilationCache::RemoveCacheArtifacts(compile_cache_decision, remove_error);
@@ -938,7 +946,7 @@ bool WinMLUtils::LoadModel(const wchar_t* model_path) {
 					ReportStatus("Compiled cache regenerated: %s", ep_display_name.c_str());
 				} else {
 					char dbg_retry_fail[512] = {};
-					snprintf(dbg_retry_fail, sizeof(dbg_retry_fail), "[WinMLUtils] Recompile after INVALID_GRAPH failed (%s). Fallback to source model.\n", compile_error.c_str());
+					snprintf(dbg_retry_fail, sizeof(dbg_retry_fail), "[WinMLUtils] Recompile after compiled model invalidation failed (%s). Fallback to source model.\n", compile_error.c_str());
 					OutputDebugStringA(dbg_retry_fail);
 					ReportStatus("Recompile failed. Fallback to source model: %s", ep_display_name.c_str());
 					created_session = create_session(model_path);
