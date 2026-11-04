@@ -799,11 +799,29 @@ namespace WoLNamesBlackedOut
             return string.Equals(lang, "ja", StringComparison.OrdinalIgnoreCase);
         }
 
+        private string GetLocalizedStringByUi(string key, string jaFallback, string enFallback)
+        {
+            string fallback = (LanguageJP?.IsChecked == true || IsJapaneseUiCulture()) ? jaFallback : enFallback;
+            return GetLocalizedString(key, fallback);
+        }
+
         private static string GetLocalizedString(string key, string fallback)
         {
             try
             {
-                string language = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName.Equals("ja", StringComparison.OrdinalIgnoreCase)
+                string value = new ResourceLoader().GetString(key);
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    return value;
+                }
+
+                string preferredLanguage = ApplicationLanguages.PrimaryLanguageOverride;
+                if (string.IsNullOrWhiteSpace(preferredLanguage))
+                {
+                    preferredLanguage = CultureInfo.CurrentUICulture.Name;
+                }
+
+                string language = preferredLanguage.StartsWith("ja", StringComparison.OrdinalIgnoreCase)
                     ? "ja-JP"
                     : "en-US";
 
@@ -812,13 +830,7 @@ namespace WoLNamesBlackedOut
                 context.QualifierValues["Language"] = language;
 
                 var candidate = resourceMap.GetValue(key, context);
-                string value = candidate?.ValueAsString ?? string.Empty;
-
-                if (string.IsNullOrWhiteSpace(value))
-                {
-                    value = new ResourceLoader().GetString(key);
-                }
-
+                value = candidate?.ValueAsString ?? string.Empty;
                 return string.IsNullOrWhiteSpace(value) ? fallback : value;
             }
             catch
@@ -1891,21 +1903,15 @@ namespace WoLNamesBlackedOut
 
             if (forceCpuEnabled)
             {
-                message = useJapanese
-                    ? "CPUライン強制モードで起動しました。"
-                    : "Started in Force CPU pipeline mode.";
+                message = GetLocalizedStringByUi("RuntimeInfo.StartupForceCpu", "CPUライン強制モードで起動しました。", "Started in Force CPU pipeline mode.");
             }
             else if (strictIGpuOnlyEnabled)
             {
-                message = useJapanese
-                    ? "iGPU厳格モードで起動しました。"
-                    : "Started in Strict iGPU mode.";
+                message = GetLocalizedStringByUi("RuntimeInfo.StartupStrictIGpu", "iGPU厳格モードで起動しました。", "Started in Strict iGPU mode.");
             }
             else if (disableDgpuEnabled)
             {
-                message = useJapanese
-                    ? "dGPU無効モードで起動しました。"
-                    : "Started in dGPU disabled mode.";
+                message = GetLocalizedStringByUi("RuntimeInfo.StartupDisableDgpu", "dGPU無効モードで起動しました。", "Started in dGPU disabled mode.");
             }
 
             if (string.IsNullOrWhiteSpace(message))
@@ -3020,6 +3026,18 @@ namespace WoLNamesBlackedOut
             }
 
             return "h264_mf";
+        }
+
+        private static bool RequiresHwEncoderPreflight(string? effectiveCodec)
+        {
+            if (string.IsNullOrWhiteSpace(effectiveCodec))
+            {
+                return false;
+            }
+
+            return effectiveCodec.Contains("nvenc", StringComparison.OrdinalIgnoreCase)
+                || effectiveCodec.Contains("qsv", StringComparison.OrdinalIgnoreCase)
+                || effectiveCodec.Contains("amf", StringComparison.OrdinalIgnoreCase);
         }
 
         private float GetYoloThreshold()
@@ -5507,21 +5525,21 @@ namespace WoLNamesBlackedOut
 
                     if (!saved)
                     {
-                        InfoBar.Message = "No preview frame is available to save";
+                        InfoBar.Message = GetLocalizedStringByUi("RuntimeInfo.NoPreviewFrameToSave", "保存できるプレビュー画像がありません。", "No preview frame is available to save");
                         InfoBar.Severity = InfoBarSeverity.Informational;
                         InfoBar.IsOpen = true;
                         InfoBar.Visibility = Visibility.Visible;
                         return;
                     }
 
-                    InfoBar.Message = "Preview image is saved";
+                    InfoBar.Message = GetLocalizedStringByUi("RuntimeInfo.PreviewImageSaved", "プレビュー画像を保存しました。", "Preview image is saved");
                     InfoBar.Severity = InfoBarSeverity.Success;
                     InfoBar.IsOpen = true;
                     InfoBar.Visibility = Visibility.Visible;
                 }
                 catch (Exception ex)
                 {
-                    InfoBar.Message = "Save failed";
+                    InfoBar.Message = GetLocalizedStringByUi("RuntimeInfo.SaveFailed", "保存に失敗しました。", "Save failed");
                     InfoBar.Severity = InfoBarSeverity.Error;
                     InfoBar.IsOpen = true;
                     InfoBar.Visibility = Visibility.Visible;
@@ -6143,7 +6161,7 @@ namespace WoLNamesBlackedOut
                         new TextBlock { Text = "WoLNamesBlackedOut", FontSize=20, Margin = new Microsoft.UI.Xaml.Thickness(12, 0, 0, 12) ,HorizontalAlignment = HorizontalAlignment.Center},
                         new TextBlock { Text = versionText, FontSize=16,Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 12) ,HorizontalAlignment = HorizontalAlignment.Center},
                         new HyperlinkButton { Content = "Calocen Rieti(Twitter)", NavigateUri = new Uri("https://x.com/calcMCalcm"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                        new HyperlinkButton { Content = "Support Site", NavigateUri = new Uri("https://blog.calocenrieti.com/blog/wol_names_blacked_out_win/"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center},
+                        new HyperlinkButton { Content = "Support Site", NavigateUri = new Uri("https://calocenrieti.com/blog/wol_names_blacked_out_win/"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center},
                         //new HyperlinkButton { Content = "Discord", NavigateUri = new Uri("https://discord.gg/q2Hqr4tD8v"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center},
                         new HyperlinkButton { Content = "GitHub", NavigateUri = new Uri("https://github.com/calocenrieti/WoLNamesBlackedOutWin"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 12) ,HorizontalAlignment = HorizontalAlignment.Center},
                         new HyperlinkButton { Content = "Donate", NavigateUri = new Uri("https://buymeacoffee.com/calocenrieti"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 12) ,HorizontalAlignment = HorizontalAlignment.Center},
@@ -6171,24 +6189,24 @@ namespace WoLNamesBlackedOut
                             new HyperlinkButton { Content = "ByteTrack-cpp", NavigateUri = new Uri("https://github.com/derpda/ByteTrack-cpp/blob/main/LICENSE"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "Eigen 5.0.0", NavigateUri = new Uri("https://gitlab.com/libeigen/eigen/-/blob/master/COPYING.APACHE"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "OpenCV 4.13", NavigateUri = new Uri("https://github.com/opencv/opencv/blob/5.x/LICENSE"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "Microsoft.Windows.AI.MachineLearning 2.4.89", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.Windows.AI.MachineLearning/2.4.89/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.Windows.AI.MachineLearning 2.5.96", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.Windows.AI.MachineLearning/2.5.96/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "Microsoft.Windows.CppWinRT 3.0.260818.1", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.Windows.CppWinRT/3.0.260818.1/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             //c#
-                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK 2.5.1", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK/2.5.1/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "Microsoft.Windows.SDK.BuildTools 10.0.28000.2705", NavigateUri = new Uri("https://aka.ms/WinSDKLicenseURL"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK 2.6.5", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK/2.6.5/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.Windows.SDK.BuildTools 10.0.28000.2957", NavigateUri = new Uri("https://aka.ms/WinSDKLicenseURL"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "Microsoft.Windows.SDK.BuildTools.MSIX 1.7.251221100", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsSDK.BuildTools.MSIX/1.7.251221100/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "Microsoft.Windows.AI.MachineLearning 2.1.74", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.Windows.AI.MachineLearning/2.1.74/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.AI 2.5.5", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.AI/2.5.5/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.Base 2.0.4", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.Base/2.0.4/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.DWrite 2.1.0", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.DWrite/2.1.0/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.Foundation 2.3.12", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.Foundation/2.3.12/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.InteractiveExperien 2.1.9", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.InteractiveExperiences/2.1.9/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.ML 2.1.94", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.ML/2.1.94/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.Runtime 2.5.1", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.Runtime/2.5.1/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.Search 2.5.5", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.Search/2.5.5/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.Widgets 2.0.5", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.Widgets/2.0.5/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.WinUI 2.3.9", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.WinUI/2.3.9/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
-                            new HyperlinkButton { Content = "Microsoft.Web.WebView2 1.0.4258.31", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.Web.WebView2/1.0.4258.31/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.Windows.AI.MachineLearning 2.4.89", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.Windows.AI.MachineLearning/2.4.89/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.AI 2.6.5", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.AI/2.6.5/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.Base 2.6.5", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.Base/2.6.5/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.DWrite 2.6.5", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.DWrite/2.6.5/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.Foundation 2.6.5", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.Foundation/2.6.5/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.InteractiveExperien 2.6.5", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.InteractiveExperiences/2.6.5/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.ML 2.6.5", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.ML/2.6.5/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.Runtime 2.6.5", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.Runtime/2.6.5/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.Search 2.6.5", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.Search/2.6.5/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.Widgets 2.6.5", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.Widgets/2.6.5/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.WindowsAppSDK.WinUI 2.6.5", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.WindowsAppSDK.WinUI/2.6.5/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
+                            new HyperlinkButton { Content = "Microsoft.Web.WebView2 1.0.4314.35", NavigateUri = new Uri("https://www.nuget.org/packages/Microsoft.Web.WebView2/1.0.4314.35/license"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             new HyperlinkButton { Content = "System.Numerics.Tensors 9.0.0", NavigateUri = new Uri("https://licenses.nuget.org/MIT"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
                             //model
                             new HyperlinkButton { Content = "PaddleOCR (model)", NavigateUri = new Uri("https://github.com/PaddlePaddle/PaddleOCR?tab=Apache-2.0-1-ov-file"), Margin = new Microsoft.UI.Xaml.Thickness(0, 0, 0, 10) ,HorizontalAlignment = HorizontalAlignment.Center },
@@ -6240,7 +6258,7 @@ namespace WoLNamesBlackedOut
                 }
                 if (!opened)
                 {
-                    InfoBar.Message = "Preview initialization failed";
+                    InfoBar.Message = GetLocalizedStringByUi("Runtime.PreviewInitFailed", "プレビューの初期化に失敗しました。", "Preview initialization failed");
                     InfoBar.Severity = InfoBarSeverity.Error;
                     InfoBar.IsOpen = true;
                     InfoBar.Visibility = Visibility.Visible;
@@ -6427,6 +6445,126 @@ namespace WoLNamesBlackedOut
             }
         }
 
+        private string GetHwEncoderBusyMessage()
+        {
+            bool prefersJapanese = LanguageJP?.IsChecked == true || IsJapaneseUiCulture();
+            string busyFallback = prefersJapanese
+                ? "GPUハードウェアエンコーダーが利用できません。録画アプリ（インスタントリプレイ等）を停止して再実行してください。"
+                : "GPU hardware encoder is unavailable or already in use. Close recording apps (such as instant replay) and try again.";
+            return GetLocalizedString("Runtime.PreflightEncoderBusy", busyFallback);
+        }
+
+        private static bool IsHwEncoderFailureStatusMessage(string? status)
+        {
+            if (string.IsNullOrWhiteSpace(status))
+            {
+                return false;
+            }
+
+            string normalized = status.ToLowerInvariant();
+            return normalized.Contains("hw_encoder_open_failed")
+                || normalized.Contains("openencodesessionex failed")
+                || normalized.Contains("incompatible client key")
+                || normalized.Contains("no capable devices found")
+                || normalized.Contains("all encoders are busy")
+                || normalized.Contains("too many concurrent sessions")
+                || normalized.Contains("device busy")
+                || normalized.Contains("resource temporarily unavailable")
+                || normalized.Contains("mfx_err_device_busy")
+                || normalized.Contains("error initializing an internal mfx session")
+                || normalized.Contains("mfxvideoencode_init")
+                || normalized.Contains("amf failed to initialise")
+                || normalized.Contains("amf initialization failed")
+                || normalized.Contains("createcomponent(amfvideoencoder");
+        }
+
+        private async Task<(bool ok, string userMessage, string rawError)> RunHwEncoderPreflightAsync(string effectiveCodec, int width, int height, int fps)
+        {
+            if (!RequiresHwEncoderPreflight(effectiveCodec))
+            {
+                return (true, string.Empty, string.Empty);
+            }
+
+            int testWidth = width > 0 ? width : 1920;
+            int testHeight = height > 0 ? height : 1080;
+            int testFps = fps > 0 ? fps : 30;
+            string arguments = $"-hide_banner -v error -f lavfi -i testsrc=size={testWidth}x{testHeight}:rate={testFps} -frames:v 1 -an -c:v {effectiveCodec} -f null - -y";
+            var processStartInfo = new ProcessStartInfo
+            {
+                FileName = ffmpegPath,
+                Arguments = arguments,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            var error = new StringBuilder();
+            int exitCode = -1;
+            try
+            {
+                using var process = new Process { StartInfo = processStartInfo };
+                process.ErrorDataReceived += (sender, e) =>
+                {
+                    if (!string.IsNullOrWhiteSpace(e.Data))
+                    {
+                        error.AppendLine(e.Data);
+                    }
+                };
+
+                process.Start();
+                process.BeginErrorReadLine();
+                await process.WaitForExitAsync();
+                exitCode = process.ExitCode;
+
+                if (exitCode == 0)
+                {
+                    return (true, string.Empty, string.Empty);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"HW encoder preflight launch failed: {ex.Message}");
+                return (true, string.Empty, ex.Message);
+            }
+
+            string rawError = error.ToString();
+            string normalized = rawError.ToLowerInvariant();
+
+            string[] previewLines = rawError
+                .Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries)
+                .Take(4)
+                .ToArray();
+            Debug.WriteLine($"HW encoder preflight exitCode={exitCode}, codec={effectiveCodec}");
+            if (previewLines.Length > 0)
+            {
+                Debug.WriteLine("HW encoder preflight stderr(head): " + string.Join(" | ", previewLines));
+            }
+
+            bool resourceBusy = normalized.Contains("resource temporarily unavailable")
+                || normalized.Contains("device busy")
+                || normalized.Contains("already in use")
+                || normalized.Contains("too many concurrent sessions")
+                || normalized.Contains("all encoders are busy")
+                || normalized.Contains("openencodesessionex failed")
+                || normalized.Contains("incompatible client key")
+                || normalized.Contains("no capable devices found")
+                || normalized.Contains("could not open encoder before eof")
+                || normalized.Contains("mfx_err_device_busy")
+                || normalized.Contains("error initializing an internal mfx session")
+                || normalized.Contains("mfxvideoencode_init")
+                || normalized.Contains("amf failed to initialise")
+                || normalized.Contains("amf initialization failed")
+                || normalized.Contains("createcomponent(amfvideoencoder");
+
+            if (!resourceBusy)
+            {
+                return (true, string.Empty, rawError);
+            }
+
+            return (false, GetHwEncoderBusyMessage(), rawError);
+        }
+
         private async Task StartBlackedOutAsync()
         {
             if (isWindowClosing)
@@ -6445,7 +6583,7 @@ namespace WoLNamesBlackedOut
             //開始時刻が終了時刻より大きければスタートしない
             if (Start_min.Value * 60 + Start_sec.Value >= End_min.Value * 60 + End_sec.Value)
             {
-                InfoBar.Message = "Error:Start_min + Start_sec >= End_min + End_sec.";
+                InfoBar.Message = GetLocalizedStringByUi("RuntimeInfo.InvalidTimeRange", "開始時刻は終了時刻より前に設定してください。", "Start time must be earlier than end time.");
                 InfoBar.Severity = InfoBarSeverity.Error;
                 InfoBar.IsOpen = true;
                 InfoBar.Visibility = Visibility.Visible;
@@ -6529,6 +6667,33 @@ namespace WoLNamesBlackedOut
                     FFMpeg_text.Text = $"WoL Names detection process ({optimizationMode}, H.264 for X)";
                 }
 
+                bool requiresHwEncoderPreflight = RequiresHwEncoderPreflight(effectiveCodec);
+                if (requiresHwEncoderPreflight)
+                {
+                    var preflight = await RunHwEncoderPreflightAsync(effectiveCodec, v_width, v_height, v_fps);
+                    if (!preflight.ok)
+                    {
+                        if (!string.IsNullOrWhiteSpace(preflight.rawError))
+                        {
+                            Debug.WriteLine($"HW encoder preflight failed: {preflight.rawError}");
+                        }
+
+                        FFMpeg_text.Text = string.Empty;
+                        running_state = false;
+                        cancel_pending_state = false;
+                        SafeSetProgressIndeterminate(false);
+                        UIControl_enable_true();
+
+                        InfoBar.Message = preflight.userMessage;
+                        InfoBar.Severity = InfoBarSeverity.Error;
+                        InfoBar.IsOpen = true;
+                        InfoBar.Visibility = Visibility.Visible;
+                        return;
+                    }
+
+                    await Task.Delay(150);
+                }
+
                 if (cancel_state || isWindowClosing)
                 {
                     stopwatch.Stop();
@@ -6574,17 +6739,61 @@ namespace WoLNamesBlackedOut
                 if (cancel_state == true)
                 {
                     StopButton_icon.Glyph = "\uE71A";
-                    InfoBar.Message = "Canceled";
+                    InfoBar.Message = GetLocalizedStringByUi("RuntimeInfo.Canceled", "キャンセルしました。", "Canceled");
                     InfoBar.Severity = InfoBarSeverity.Warning;
                     InfoBar.IsOpen = true;
                     InfoBar.Visibility = Visibility.Visible;
                 }
                 else if (processResult != 0)
                 {
-                    InfoBar.Message = $"Processing failed (code={processResult})";
-                    InfoBar.Severity = InfoBarSeverity.Error;
-                    InfoBar.IsOpen = true;
-                    InfoBar.Visibility = Visibility.Visible;
+                    if (processResult == -2 && requiresHwEncoderPreflight)
+                    {
+                        string latestStatus = FrameProcessor.LatestStatusMessage;
+                        if (!string.IsNullOrWhiteSpace(latestStatus))
+                        {
+                            Debug.WriteLine($"Process -2 status message: {latestStatus}");
+                        }
+
+                        if (IsHwEncoderFailureStatusMessage(latestStatus))
+                        {
+                            InfoBar.Message = GetHwEncoderBusyMessage();
+                            InfoBar.Severity = InfoBarSeverity.Error;
+                            InfoBar.IsOpen = true;
+                            InfoBar.Visibility = Visibility.Visible;
+                        }
+                        else
+                        {
+                            var postFailurePreflight = await RunHwEncoderPreflightAsync(effectiveCodec, v_width, v_height, v_fps);
+                            if (!postFailurePreflight.ok)
+                            {
+                                if (!string.IsNullOrWhiteSpace(postFailurePreflight.rawError))
+                                {
+                                    Debug.WriteLine($"HW encoder post-failure preflight failed: {postFailurePreflight.rawError}");
+                                }
+
+                                InfoBar.Message = postFailurePreflight.userMessage;
+                                InfoBar.Severity = InfoBarSeverity.Error;
+                                InfoBar.IsOpen = true;
+                                InfoBar.Visibility = Visibility.Visible;
+                            }
+                            else
+                            {
+                                string processingFailedFormat = GetLocalizedStringByUi("RuntimeInfo.ProcessingFailedWithCode", "処理に失敗しました (code={0})", "Processing failed (code={0})");
+                                InfoBar.Message = string.Format(CultureInfo.CurrentCulture, processingFailedFormat, processResult);
+                                InfoBar.Severity = InfoBarSeverity.Error;
+                                InfoBar.IsOpen = true;
+                                InfoBar.Visibility = Visibility.Visible;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        string processingFailedFormat = GetLocalizedStringByUi("RuntimeInfo.ProcessingFailedWithCode", "処理に失敗しました (code={0})", "Processing failed (code={0})");
+                        InfoBar.Message = string.Format(CultureInfo.CurrentCulture, processingFailedFormat, processResult);
+                        InfoBar.Severity = InfoBarSeverity.Error;
+                        InfoBar.IsOpen = true;
+                        InfoBar.Visibility = Visibility.Visible;
+                    }
                 }
                 else
                 {
@@ -6651,14 +6860,14 @@ namespace WoLNamesBlackedOut
                                 // ストリームの内容をコピー
                                 await sourceStream.AsStreamForRead().CopyToAsync(destinationStream.AsStreamForWrite());
                             }
-                            InfoBar.Message = "output video is saved";
+                            InfoBar.Message = GetLocalizedStringByUi("RuntimeInfo.OutputVideoSaved", "出力動画を保存しました。", "output video is saved");
                             InfoBar.Severity = InfoBarSeverity.Success;
                             InfoBar.IsOpen = true;
                             InfoBar.Visibility = Visibility.Visible;
                         }
                         catch (Exception ex)
                         {
-                            InfoBar.Message = "Save failed";
+                            InfoBar.Message = GetLocalizedStringByUi("RuntimeInfo.SaveFailed", "保存に失敗しました。", "Save failed");
                             InfoBar.Severity = InfoBarSeverity.Error;
                             InfoBar.IsOpen = true;
                             InfoBar.Visibility = Visibility.Visible;
@@ -6755,7 +6964,7 @@ namespace WoLNamesBlackedOut
                 running_state = false;
                 UIControl_enable_true();
                 Debug.WriteLine($"BlackedOutStartButton_Checked failed: {ex.Message}");
-                InfoBar.Message = "Processing failed";
+                InfoBar.Message = GetLocalizedStringByUi("RuntimeInfo.ProcessingFailed", "処理に失敗しました。", "Processing failed");
                 InfoBar.Severity = InfoBarSeverity.Error;
                 InfoBar.IsOpen = true;
                 InfoBar.Visibility = Visibility.Visible;

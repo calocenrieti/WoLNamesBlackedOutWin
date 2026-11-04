@@ -22,6 +22,8 @@
 
 using namespace WoLNamesBlackedOut::Core;
 
+void ReportStatus(const char* fmt, ...);
+
 // ============================================================
 // デバッグログユーティリティ（OutputDebugStringA + コンソール）
 // ============================================================
@@ -310,6 +312,7 @@ bool VideoPipeline::Initialize(const PipelineConfig& config) {
 							input_path_c, 
 							nullptr, nullptr) < 0) {
 		PipelineLog("[VideoPipeline::Initialize] FAILED: Open input file\n");
+		ReportStatus("PIPELINE_INIT_FAILED: open input file");
 		return false;
 	}
 	PipelineLog("[VideoPipeline::Initialize] Input file opened OK\n");
@@ -317,6 +320,7 @@ bool VideoPipeline::Initialize(const PipelineConfig& config) {
 	PipelineLog("[VideoPipeline::Initialize] Step 6: Find stream info\n");
 	if (avformat_find_stream_info(input_format_ctx_, nullptr) < 0) {
 		PipelineLog("[VideoPipeline::Initialize] FAILED: Find stream info\n");
+		ReportStatus("PIPELINE_INIT_FAILED: find stream info");
 		return false;
 	}
 	PipelineLogFmt("[VideoPipeline::Initialize] Stream info OK, streams=%u\n", input_format_ctx_->nb_streams);
@@ -345,6 +349,7 @@ bool VideoPipeline::Initialize(const PipelineConfig& config) {
 
 	if (video_stream_index_ == -1) {
 		PipelineLog("[VideoPipeline::Initialize] FAILED: No video stream found\n");
+		ReportStatus("PIPELINE_INIT_FAILED: no video stream");
 		return false;
 	}
 	PipelineLogFmt("[VideoPipeline::Initialize] Video stream index=%d audio_stream_index=%d\n", video_stream_index_, audio_stream_index_);
@@ -472,6 +477,7 @@ bool VideoPipeline::Initialize(const PipelineConfig& config) {
 
 	if (avcodec_open2(decoder_ctx_, decoder_codec, nullptr) < 0) {
 		PipelineLog("[VideoPipeline::Initialize] FAILED: Open decoder\n");
+		ReportStatus("PIPELINE_INIT_FAILED: open decoder");
 		return false;
 	}
 	PipelineLog("[VideoPipeline::Initialize] Decoder opened OK\n");
@@ -661,8 +667,12 @@ bool VideoPipeline::Initialize(const PipelineConfig& config) {
 	}
 
 	PipelineLog("[VideoPipeline::Initialize] Step 8: Open encoder\n");
-	if (avcodec_open2(encoder_ctx_, encoder_codec, &opts) < 0) {
+	int open_encoder_ret = avcodec_open2(encoder_ctx_, encoder_codec, &opts);
+	if (open_encoder_ret < 0) {
 		PipelineLog("[VideoPipeline::Initialize] FAILED: Open encoder\n");
+		char errbuf[AV_ERROR_MAX_STRING_SIZE] = {};
+		av_strerror(open_encoder_ret, errbuf, sizeof(errbuf));
+		ReportStatus("HW_ENCODER_OPEN_FAILED: codec=%s ret=%d err=%s", encoder_codec ? encoder_codec->name : "(null)", open_encoder_ret, errbuf);
 		av_dict_free(&opts);
 		return false;
 	}

@@ -330,6 +330,45 @@
   <data name="Runtime.BlackedOutStop" xml:space="preserve">
     <value> BlackedOut停止</value>
   </data>
+  <data name="Runtime.PreflightEncoderBusy" xml:space="preserve">
+    <value>GPUハードウェアエンコーダーが利用できません。録画アプリ（インスタントリプレイ等）を停止して再実行してください。</value>
+  </data>
+  <data name="Runtime.PreflightEncoderInitFailed" xml:space="preserve">
+    <value>ハードウェアエンコーダーの初期化に失敗しました。環境を確認して再実行してください。</value>
+  </data>
+  <data name="RuntimeInfo.StartupForceCpu" xml:space="preserve">
+    <value>CPUライン強制モードで起動しました。</value>
+  </data>
+  <data name="RuntimeInfo.StartupStrictIGpu" xml:space="preserve">
+    <value>iGPU厳格モードで起動しました。</value>
+  </data>
+  <data name="RuntimeInfo.StartupDisableDgpu" xml:space="preserve">
+    <value>dGPU無効モードで起動しました。</value>
+  </data>
+  <data name="RuntimeInfo.NoPreviewFrameToSave" xml:space="preserve">
+    <value>保存できるプレビュー画像がありません。</value>
+  </data>
+  <data name="RuntimeInfo.PreviewImageSaved" xml:space="preserve">
+    <value>プレビュー画像を保存しました。</value>
+  </data>
+  <data name="RuntimeInfo.SaveFailed" xml:space="preserve">
+    <value>保存に失敗しました。</value>
+  </data>
+  <data name="RuntimeInfo.InvalidTimeRange" xml:space="preserve">
+    <value>開始時刻は終了時刻より前に設定してください。</value>
+  </data>
+  <data name="RuntimeInfo.Canceled" xml:space="preserve">
+    <value>キャンセルしました。</value>
+  </data>
+  <data name="RuntimeInfo.ProcessingFailedWithCode" xml:space="preserve">
+    <value>処理に失敗しました (code={0})</value>
+  </data>
+  <data name="RuntimeInfo.OutputVideoSaved" xml:space="preserve">
+    <value>出力動画を保存しました。</value>
+  </data>
+  <data name="RuntimeInfo.ProcessingFailed" xml:space="preserve">
+    <value>処理に失敗しました。</value>
+  </data>
   <data name="BlackedOutImageSettingsText.Text" xml:space="preserve">
     <value> 画像設定</value>
   </data>
