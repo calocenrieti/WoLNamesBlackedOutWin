@@ -3806,8 +3806,8 @@ namespace WoLNamesBlackedOut
                 }
 
                 SafeSetProgressIndeterminate(false);
-                UIControl_enable_true();
                 running_state = false;
+                UIControl_enable_true();
                 SaveImageButton.IsEnabled = true;
             }
             else if (fileExtension == ".mp4")
@@ -3911,8 +3911,8 @@ namespace WoLNamesBlackedOut
             }
 
             SafeSetProgressIndeterminate(false);
-            UIControl_enable_true();
             running_state = false;
+            UIControl_enable_true();
         }
 
         private async Task PreviewSingleFrameAsync(int frameIndex, bool showBusyIndicator = false)

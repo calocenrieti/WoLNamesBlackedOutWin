@@ -943,6 +943,8 @@ void VideoPipeline::DecodeThread() {
 	AVStream* video_stream = (video_stream_index_ >= 0 && input_format_ctx_) ? input_format_ctx_->streams[video_stream_index_] : nullptr;
 	double trim_start = std::max(0.0, config_.trim_start_seconds);
 	double trim_end = config_.trim_end_seconds;
+	bool reached_trim_end = false;
+	bool logged_first_trimmed_video_frame = false;
 
 	if (trim_start > 0.0 && input_format_ctx_ && video_stream) {
 		const int64_t seek_target_ts = av_rescale_q(
@@ -961,13 +963,17 @@ void VideoPipeline::DecodeThread() {
 		}
 		if (seek_ret >= 0) {
 			avcodec_flush_buffers(decoder_ctx_);
-			PipelineLogFmt("[DecodeThread] Seeked near trim_start=%.3f sec (ts=%lld)\n", trim_start, static_cast<long long>(seek_target_ts));
+			PipelineLogFmt("[DecodeThread] Seeked near trim_start=%.3f sec (target_ts=%lld, tb=%d/%d)\n",
+				trim_start,
+				static_cast<long long>(seek_target_ts),
+				video_stream->time_base.num,
+				video_stream->time_base.den);
 		} else {
 			PipelineLogFmt("[DecodeThread] Seek near trim_start failed: %d, continue without seek\n", seek_ret);
 		}
 	}
 
-	while (!stop_requested_.load()) {
+	while (!stop_requested_.load() && !reached_trim_end) {
 		// パケットを読み込む
 		int ret = av_read_frame(input_format_ctx_, packet);
 		if (ret < 0) {
@@ -1050,7 +1056,8 @@ void VideoPipeline::DecodeThread() {
 							if (frame_sec > trim_end) {
 								av_frame_unref(frame);
 								av_packet_unref(packet);
-								stop_requested_ = true;
+								reached_trim_end = true;
+								PipelineLogFmt("[DecodeThread] Reached trim_end=%.3f sec at frame_sec=%.3f, finishing decode\n", trim_end, frame_sec);
 								break;
 							}
 						}
@@ -1158,6 +1165,11 @@ void VideoPipeline::DecodeThread() {
 						frame_ts = (frame->pts != AV_NOPTS_VALUE) ? frame->pts : frame->pkt_dts;
 					}
 					gpu_frame.pts = frame_ts;
+					if (!logged_first_trimmed_video_frame && video_stream && frame_ts != AV_NOPTS_VALUE) {
+						double accepted_sec = frame_ts * av_q2d(video_stream->time_base);
+						PipelineLogFmt("[DecodeThread] First accepted video frame at %.3f sec (trim_start=%.3f)\n", accepted_sec, trim_start);
+						logged_first_trimmed_video_frame = true;
+					}
 
 					// キューに追加（テクスチャが有効な場合のみ）
 					if (gpu_frame.texture.Get()) {
@@ -1186,7 +1198,7 @@ void VideoPipeline::DecodeThread() {
 		}
 
 		av_packet_unref(packet);
-		if (stop_requested_.load()) {
+		if (stop_requested_.load() || reached_trim_end) {
 			break;
 		}
 	}

@@ -453,11 +453,15 @@ bool PreviewPipeline::InitializeVideo(const wchar_t* file_path) {
     // 動画情報を取得
     video_width_ = codec_params->width;
     video_height_ = codec_params->height;
-    fps_ = static_cast<int>(av_q2d(format_ctx_->streams[video_stream_index_]->avg_frame_rate));
-    if (fps_ <= 0) {
-        fps_ = static_cast<int>(av_q2d(format_ctx_->streams[video_stream_index_]->r_frame_rate));
+
+    double fps_value = av_q2d(format_ctx_->streams[video_stream_index_]->avg_frame_rate);
+    if (fps_value <= 0.0) {
+        fps_value = av_q2d(format_ctx_->streams[video_stream_index_]->r_frame_rate);
     }
-    if (fps_ <= 0) fps_ = 30;
+    if (fps_value <= 0.0) {
+        fps_value = 30.0;
+    }
+    fps_ = (std::max)(1, static_cast<int>(std::llround(fps_value)));
 
     total_frames_ = static_cast<int>(format_ctx_->streams[video_stream_index_]->nb_frames);
     if (total_frames_ <= 0) {
@@ -641,15 +645,34 @@ bool PreviewPipeline::GetVideoFrame(int frame_index) {
     while (av_read_frame(format_ctx_, packet) >= 0) {
         if (packet->stream_index == video_stream_index_) {
             int ret = avcodec_send_packet(decoder_ctx_, packet);
-            if (ret >= 0) {
-                ret = avcodec_receive_frame(decoder_ctx_, frame);
-                if (ret == 0) {
-                    frame_decoded = true;
-                    break;
+            if (ret >= 0 || ret == AVERROR(EAGAIN)) {
+                while (true) {
+                    ret = avcodec_receive_frame(decoder_ctx_, frame);
+                    if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
+                        break;
+                    }
+                    if (ret < 0) {
+                        break;
+                    }
+
+                    int64_t frame_ts = frame->best_effort_timestamp;
+                    if (frame_ts == AV_NOPTS_VALUE) {
+                        frame_ts = (frame->pts != AV_NOPTS_VALUE) ? frame->pts : frame->pkt_dts;
+                    }
+
+                    if (frame_ts == AV_NOPTS_VALUE || frame_ts >= timestamp) {
+                        frame_decoded = true;
+                        break;
+                    }
+
+                    av_frame_unref(frame);
                 }
             }
         }
         av_packet_unref(packet);
+        if (frame_decoded) {
+            break;
+        }
     }
 
     av_packet_free(&packet);
